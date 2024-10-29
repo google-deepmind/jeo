@@ -2,9 +2,9 @@
 # Project metadata. Available keys are documented at:
 # https://packaging.python.org/en/latest/specifications/declaring-project-metadata
 name = "jeo"
-description = ""
+description = "Tasks, datasets and models for remote sensing and Earth observation in Jax."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [{name = "Jeo authors", email="biom-dev@google.com"}]
 classifiers = [  # List of https://pypi.org/classifiers/
@@ -15,7 +15,23 @@ keywords = []
 
 # pip dependencies of the project
 # Installed locally with `pip install -e .`
-dependencies = []
+dependencies = [
+    "absl-py",
+    "clu",
+    "einops",
+    "flax",
+    "jax",
+    "ml_collections",
+    "numpy>=1.26",
+    "optax",
+    "pytest",
+    "scipy",
+    "scikit-learn",
+    "tensorflow",
+    "tensorflow_datasets",
+    "tensorflow_probability",
+    "termcolor",
+]
 
 # `version` is automatically set by flit to use `jeo.__version__`
 dynamic = ["version"]
@@ -23,7 +39,7 @@ dynamic = ["version"]
 [project.urls]
 homepage = "https://github.com/google-deepmind/jeo"
 repository = "https://github.com/google-deepmind/jeo"
-changelog = "https://github.com/google-deepmind/jeo/blob/main/CHANGELOG.md"
+# changelog = "https://github.com/google-deepmind/jeo/blob/main/CHANGELOG.md"
 # documentation = ""
 
 [project.optional-dependencies]
@@ -34,6 +50,12 @@ dev = [
     "pytest-xdist",
     "pylint>=2.6.0",
     "pyink",
+]
+
+# Installed through `pip install '.[docs]'`.
+docs = [
+    # Install `apitree` with all extensions (sphinx, theme,...)
+    "sphinx-apitree[ext]",
 ]
 
 [tool.pyink]
@@ -54,6 +76,6 @@ build-backend = "flit_core.buildapi"
 # If using another build backend (setuptools, poetry), you can remove this
 # section.
 exclude = [
-  # Do not release tests files on PyPI
+  # Do not release tests files on PyPI.
   "**/*_test.py",
 ]

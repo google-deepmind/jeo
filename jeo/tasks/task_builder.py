@@ -13,21 +13,112 @@
 # limitations under the License.
 
 """Task builder."""
+import abc
+import functools
+from typing import Any, Callable, Optional, Sequence, Union
+
 from absl import logging
+import flax.linen as nn
+import jax.numpy as jnp
 from jeo import train_utils
-from jeo.tools import restore
+from jeo.losses import losses
+
+
+ArrayDict = dict[str, jnp.ndarray]
+Mapping = dict[str, Any]
+FloatOrArr = Union[float, jnp.ndarray]
+PredictFn = Callable[[Mapping, Mapping], Union[tuple[Any], Mapping]]
+ArrayTupleOrDict = tuple[Union[ArrayDict, jnp.ndarray], ...]
+
+
+class TaskBase(abc.ABC):
+  """Task interface."""
+
+  def __init__(
+      self,
+      loss_name: str = "sigmoid_xent",
+      loss_kw: Optional[dict[str, Any]] = None,
+      modalities: Sequence[str] | str = ("image",),
+      input_as_dict: bool = False,
+  ):
+    self.loss_fn = losses.get_loss_fn(loss_name)
+    if loss_kw is not None:
+      self.loss_fn = functools.partial(self.loss_fn, **loss_kw)
+    if isinstance(modalities, str):
+      modalities = (modalities,)
+    self.modalities = modalities
+    self.input_as_dict = input_as_dict
+
+  def model_inputs(self, *batches: Mapping) -> ArrayTupleOrDict:
+    """Processes the model inputs.
+
+    By default, only a single batch is expected. But in some cases, more than
+    one batch might be provided, eg. for semi-supervised training.
+    The base model outputs a tuple, but inheriting classes can also output
+    a dictionary with a separate key for each mode.
+
+    Args:
+      *batches: a batch (or potentially multiple batches) of data.
+
+    Returns:
+      A tuple with the processed inputs to be fed to the model. The output tuple
+      consists of one or more arrays or a single element which is a dictionary
+      if `input_as_dict` is True.
+    """
+    batch = batches[0]
+    if self.input_as_dict:
+      return ({k: v for k, v in batch.items() if k in self.modalities},)
+    return tuple(batch[m] for m in self.modalities)
+
+  def get_predict_fn(
+      self, model: nn.Module, rngs=None, train=False
+  ) -> PredictFn:
+    """Returns a function that extracts inference outputs from the given model.
+
+    Args:
+      model: The model to run inference on.
+      rngs: JAX random keys.
+      train: whether or not the call is for training. Defaults to False.
+
+    Returns:
+      A function that loads the model weights and extracts the outputs to be
+      used for evaluations.
+    """
+
+    def predict_fn(params, **batch):
+      model_inputs = self.model_inputs(batch)
+      model_outputs = model.apply(params, *model_inputs, train=train, rngs=rngs)
+      # model_outputs is expected to be a tuple
+      if not isinstance(model_outputs, (list, tuple)):
+        # In single task case, the first element should be the logits.
+        if not isinstance(model_outputs, dict):
+          model_outputs = (model_outputs, {})
+        # In the multitask case, the model can output a dictionary of format
+        # {"task_name": (output, aux)}. In this case, this dict is stored in
+        # second element of the tuple.
+        else:
+          model_outputs = (None, model_outputs)
+      return model_outputs
+
+    return predict_fn
+
+  @abc.abstractmethod
+  def get_loss_and_aux(
+      self, model_outputs, *batches: Mapping, train: bool = False
+  ) -> tuple[FloatOrArr, dict[str, FloatOrArr]]:
+    ...
 
 
 COMMON_TASKS = {
-    "classification": "common_tasks.ClassificationTask",
-    "classification_multihead": "common_tasks.MultiHeadClassificationTask",
-    "classification_multilabel": "common_tasks.ClassificationTask",
+    "classification": "classification.ClassificationTask",
+    "classification_multihead": "classification.MultiHeadClassificationTask",
+    "classification_multilabel": "classification.ClassificationTask",
     "masked_autoencoder": "mae.MaeTask",
     "mfp_masked_autoencoder": "mae.MfpMaeTask",
     "classification_and_reconstruction": "mae.ClassificationAndReconstructionTask",  # pylint: disable=line-too-long
-    "multitask_classification": "common_tasks.MultitaskClassificationTask",
+    "multitask_classification": "classification.MultitaskClassificationTask",
     "panoptic_segmentation": "segmentation.PanopticSegmentationTask",
-    "regression": "common_tasks.RegressionTask",
+    "regression": "regression.RegressionTask",
     "regression_segmentation": "segmentation.RegressionSegmentationTask",
     "segmentation": "segmentation.SegmentationTask",
     "simclr": "contrastive.SimClrTask",
@@ -51,8 +142,3 @@ def from_config(config):
   logging.info("Seting up task `%s` in class `%s` with args: %s",
                task_type, task_cls, args)
   return task_cls(**args)
-
-
-def from_xid(xid, wid=1):
-  cfg = restore.get_config(xid, wid)
-  return from_config(cfg)

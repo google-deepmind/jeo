@@ -22,8 +22,8 @@ Prefer not to use `*` or `**` in pp fn arguments, in order to allow programatic,
 not hard-coded arguments for easier sweeping across the modalities and bands.
 """
 from typing import Any, Callable, Mapping, Sequence
-from big_vision.pp.registry import Registry  # pylint: disable=g-importing-member
 from jeo.pp import pp_utils
+from jeo.pp.pp_builder import Registry  # pylint: disable=g-importing-member
 import tensorflow as tf
 
 

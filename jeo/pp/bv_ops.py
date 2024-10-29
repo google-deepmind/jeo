@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """Preprocessing ops forked from big_vision code base."""
-from big_vision.pp.registry import Registry  # pylint: disable=g-importing-member
-import big_vision.utils as bv_utils
 import jax
 from jeo.pp import pp_utils
+from jeo.pp.pp_builder import Registry  # pylint: disable=g-importing-member
+from jeo.tools import bv_utils
 import numpy as np
 import tensorflow as tf
 

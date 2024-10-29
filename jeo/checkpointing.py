@@ -17,7 +17,7 @@
 Interface to the good old simple BigVision checkpointing.
 To be updated later.
 """
-from big_vision import utils as bv_utils
+from jeo.tools import bv_utils
 
 
 def load_params(path, **kwargs):

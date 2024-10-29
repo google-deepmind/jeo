@@ -17,12 +17,11 @@
 These functions were inspired by preprocesing in the big_vision UViM project.
 """
 
-from big_vision.pp.registry import Registry  # pylint: disable=g-importing-member
 import einops
 from jeo.pp import pp_utils
+from jeo.pp.pp_builder import Registry  # pylint: disable=g-importing-member
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons.image as tfa_image
 
 
 @Registry.register("preprocess_ops.randu", replace=True)
@@ -47,37 +46,6 @@ def get_det_roll(*, randkey1="rollx", randkey2="rolly"):
     return image
 
   return _det_roll
-
-
-@Registry.register("preprocess_ops.det_rotate", replace=True)
-@pp_utils.InKeyOutKey(with_data=True)
-def get_det_rotate(*, randkey="angle"):
-  """Rotate by an angle between -/+ `angle` using `randkey` in range (0, 1]."""
-
-  def _det_rotate(image, data, interpolation="bicubic", fill_value=0):
-    orig_shape = image.shape
-    orig_ndims = image.ndim
-    if orig_ndims == 5:
-      image = einops.rearrange(
-          image,
-          "b t h w c -> (b t) h w c",
-      )
-    image = tfa_image.rotate(
-        image,
-        angles=(data[randkey] * 2.0 * np.pi),
-        interpolation=interpolation,
-        fill_value=fill_value,
-    )
-    if orig_ndims == 5:
-      image = einops.rearrange(
-          image,
-          "(b t) h w c -> b t h w c",
-          b=orig_shape[0],
-          t=orig_shape[1],
-      )
-    return image
-
-  return _det_rotate
 
 
 @Registry.register("preprocess_ops.det_rotate90", replace=True)

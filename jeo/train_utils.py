@@ -19,18 +19,17 @@ import os
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from absl import logging
-from big_vision import optax as bv_optax
-from big_vision import utils as bv_utils
 import jax
+from jeo.tools import bv_optax
+from jeo.tools import bv_utils
 import ml_collections
 import numpy as np
 
-from google3.pyglib import gfile
+from tensorflow.io import gfile
 
 ParamsT = Mapping[str, Any]
 
-BASEDIR = "jeo"
-BASEDIR_EXP = "google3.experimental.brain.jeo"
+BASEDIR = BASEDIR_EXP = "jeo"
 BV_BASEDIR = "big_vision"
 SCENIC_BASEDIR = "scenic"
 
@@ -128,9 +127,9 @@ def finalize_and_cleanup(workdir, cleanup, error_msg):
     sync()
 
   if cleanup and workdir and jax.process_index() == 0:
-    gfile.DeleteRecursively(workdir)
+    gfile.rmtree(workdir)
     try:  # Only need this on the last work-unit, if already empty.
-      gfile.RmDir(os.path.join(workdir, ".."))
+      gfile.remove(os.path.join(workdir, ".."))
     except gfile.GOSError:
       pass
 
@@ -157,11 +156,11 @@ def validate_and_update_config_inplace(config):
 
 def save_metrics(workdir, metrics, step=None):
   path = os.path.join(workdir, "metrics.npz")
-  with gfile.Open(path, "wb") as f:
+  with gfile.GFile(path, "wb") as f:
     np.savez(f, **metrics)
   if step is not None:
     step_path = os.path.join(workdir, f"_metrics-{step:09d}.npz")
-    gfile.Copy(path, step_path, overwrite=True)
+    gfile.copy(path, step_path, overwrite=True)
 
 
 def get_frozen_mask(params, schedule, log=None):
@@ -181,7 +180,7 @@ def log_frozen(params, schedule):
   num_freeze, num_learn = sum(frozen), len(frozen) - sum(frozen)
   logging.info("Frozen params layers: %s frozen, %s not frozen", num_freeze,
                num_learn)
-  # TODO(mnn): Incorporate this in paramter_overview.
+  # TODO: Incorporate this in paramter_overview.
   for i, (k, v) in enumerate(bv_utils.tree_flatten_with_names(fm)[0]):
     logging.info(f"{i:3} {k:<40}: {'Frozen' if v else 'not frozen'}")  # pylint: disable=logging-fstring-interpolation
   return num_freeze, num_learn

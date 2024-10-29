@@ -18,12 +18,14 @@ import functools
 import os
 from typing import Any, Sequence, Union
 
-from big_vision.pp import utils as bv_pp_utils
-from geeflow.stats import stats_util
+from jeo.tools import geeflow_utils
 import tensorflow as tf
 
 
-maybe_repeat = bv_pp_utils.maybe_repeat
+def maybe_repeat(arg, n_reps):
+  if not isinstance(arg, Sequence) or isinstance(arg, str):
+    arg = (arg,) * n_reps
+  return arg
 
 
 def get_lookup_table(label_map: Union[dict[Any, Any], Sequence[Any]],
@@ -55,7 +57,7 @@ def load_normalization_ranges(path, split_name="train", postfix=None,
   """Returns center and scale parameters for normalization."""
   if data_dir:  # Using new locations.
     path = os.path.join(data_dir, path.replace(":", "/"), "stats")
-  stats = stats_util.load_json(path, split_name, postfix, as_cd=False)
+  stats = geeflow_utils.load_json(path, split_name, postfix, as_cd=False)
   if not stats:
     raise ValueError(f"No stats loaded for {postfix} in {data_dir} {path}.")
   # Assuming that it's a multi-band variable.
@@ -75,7 +77,7 @@ def load_normalization_ranges(path, split_name="train", postfix=None,
 class InKeyOutKey(object):
   """Decorator for preprocessing for single-input sinle-output ops.
 
-  From http://google3/third_party/py/big_vision/pp/utils.py;l=12;rcl=675470346
+  From (internal link)/py/big_vision/pp/utils.py;l=12;rcl=675470346
 
   Attributes:
     indefault: The default input key. If None, `key` or `inkey` must be

@@ -18,29 +18,22 @@ import math
 from typing import Optional, Sequence
 
 from absl import logging
-import big_vision.pp.builder as pp_builder
 import einops
 import flax.jax_utils as flax_utils
 import jax
 from jeo import train_utils
+from jeo.pp import pp_builder
 # Importing default preprocessing ops in order to register them.
 # If using ops not imported here, provide module names via config.pp_modules.
 import jeo.pp.bv_ops  # pylint: disable=unused-import
-import jeo.pp.decode_ops  # pylint: disable=unused-import
 import jeo.pp.image_ops  # pylint: disable=unused-import
 import jeo.pp.pp_ops  # pylint: disable=unused-import
 import jeo.pp.rand_det_ops  # pylint: disable=unused-import
-import jeo.pp.sat_ops  # pylint: disable=unused-import
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-from google3.pyglib.function_utils import memoize
 
-
-# Memoize() will report a warning and will not memoize if any arg is unhashable,
-# eg. if kwargs contain ConfigDicts.
-@memoize.Memoize()
 def get_num_examples(dataset, split, data_dir=None, dataset_module=None,
                      **kwargs):
   """Returns number of examples for given split."""
@@ -85,6 +78,7 @@ def get_data(dataset, split, preprocess_fn, batch_size, data_dir, train, *,
              # For custom dataset loaders:
              dataset_module=None,
              skip_decode: Sequence[str] = ("image",),
+             download_and_prepare: bool = False,
              **kwargs) -> tuple[tf.data.Dataset, int]:
   """Returns dataset with the number of train examples or evaluation steps.
 
@@ -107,6 +101,7 @@ def get_data(dataset, split, preprocess_fn, batch_size, data_dir, train, *,
       derived from the dataset and batch size.
     dataset_module: Optional dataset module name (if not using TFDS).
     skip_decode: List of features to skip decoding.
+    download_and_prepare: Download and prepare TFDS dataset.
     **kwargs: Additional arguments passed to dataset loading functions.
   Returns:
     Prefetched tf.data.Dataset object of the training or evaluation split.
@@ -124,7 +119,8 @@ def get_data(dataset, split, preprocess_fn, batch_size, data_dir, train, *,
   else:
     data, _ = get_dataset_tfds(
         dataset=dataset, split=split, shuffle_files=train,
-        data_dir=data_dir, skip_decode=skip_decode)
+        data_dir=data_dir, skip_decode=skip_decode,
+        download_and_prepare=download_and_prepare)
 
   if not callable(preprocess_fn):
     preprocess_fn = pp_builder.get_preprocess_fn(preprocess_fn, log_steps=True)
@@ -189,7 +185,7 @@ def get_data(dataset, split, preprocess_fn, batch_size, data_dir, train, *,
                                         dataset_module, **kwargs)
         # Approximation, assuming the examples were evenly distributed across
         # all hosts. This is not always true, but is not critical for train.
-        # TODO(mnn): Get exact number of examples per host for auto_dataset.
+        # TODO: Get exact number of examples per host for auto_dataset.
         max_num_examples_per_host = math.ceil(num_examples/jax.process_count())
       val_steps = math.ceil(max_num_examples_per_host / batch_size)
       logging.info("Non-train dataset %s split %s: val_steps=%s "
@@ -243,9 +239,12 @@ def get_builder(dataset: str, data_dir: Optional[str]):
 
 def get_dataset_tfds(dataset: str, split: str = "train",
                      shuffle_files: bool = True, data_dir: Optional[str] = None,
-                     skip_decode: Sequence[str] = ("image",)):
+                     skip_decode: Sequence[str] = ("image",),
+                     download_and_prepare: bool = False):
   """Returns TFDS dataset split."""
   builder = get_builder(dataset, data_dir)
+  if download_and_prepare:
+    builder.download_and_prepare()
   split = tfds.even_splits(split, jax.process_count())[jax.process_index()]
   skip_decoders = {
       f: tfds.decode.SkipDecoding()

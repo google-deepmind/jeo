@@ -18,12 +18,36 @@ Many ops are based on third_party/py/big_vision/pp/ops_image.py.
 """
 from collections.abc import Sequence
 
-from big_vision.pp.registry import Registry  # pylint: disable=g-importing-member
-import einops
 from jeo.pp import pp_utils
-from jeo.pp import randaug_geo
-from simclr.tf2 import data_util as simclr_data_util
+from jeo.pp.pp_builder import Registry  # pylint: disable=g-importing-member
 import tensorflow as tf
+
+
+@Registry.register("preprocess_ops.decode")
+@pp_utils.InKeyOutKey(indefault="image", outdefault="image")
+def get_decode(channels=3, precise=False):
+  """Decode an encoded image string, see tf.io.decode_image.
+
+  Args:
+    channels: see tf.io.decode_image.
+    precise: if False, use default TF image decoding algorithm. If True, change
+      DCT method for JPEG decoding to match PIL/cv2/PyTorch.
+
+  Returns:
+    The decoded image.
+  """
+
+  def _decode(image):
+    if precise:
+      return tf.image.decode_jpeg(  # Also supports png btw.
+          image, channels=channels, dct_method="INTEGER_ACCURATE"
+      )
+    else:
+      return tf.io.decode_image(
+          image, channels=channels, expand_animations=False
+      )
+
+  return _decode
 
 
 @Registry.register("preprocess_ops.resize", replace=True)
@@ -91,7 +115,7 @@ def get_resize_small(smaller_size, method="area", antialias=False):
 
   Note:
     backwards-compat for "area"+antialias tested here:
-    http://colab/drive/1KqpoEMzqYvbnNyWP7-ygnkpO05_q4hhy?usp=sharing
+    (internal link)?usp=sharing
   """
 
   def _resize_small(image):  # pylint: disable=missing-docstring
@@ -404,73 +428,6 @@ def get_cutout_from_mask(mask_key="cutout_mask", replace=0):
   return _cutout_from_mask
 
 
-@Registry.register("preprocess_ops.simclr_crop_and_resize", replace=True)
-@pp_utils.InKeyOutKey(with_data=False)
-def get_simclr_crop_and_resize(height, width=None):
-  """Make a random crop and resize it to height `height` and width `width`.
-
-  Args:
-    height: Desired image height.
-    width: Desired image width.
-
-  Returns:
-    A `height` x `width` x channels Tensor holding a random crop of `image`.
-  """
-  if width is None:
-    width = height
-
-  def crop_and_resize(image):
-    orig_shape = image.shape
-    orig_ndims = image.ndim
-
-    if orig_ndims == 5:
-      image = einops.rearrange(
-          image,
-          "b t h w c -> h w (b t c)",
-      )
-    elif orig_ndims == 4:
-      image = einops.rearrange(
-          image,
-          "b h w c -> h w (b c)",
-      )
-    image = simclr_data_util.crop_and_resize(image, height, width)
-
-    if orig_ndims == 5:
-      image = einops.rearrange(
-          image,
-          "h w (b t c) -> b t h w c",
-          b=orig_shape[0],
-          t=orig_shape[1],
-          c=orig_shape[-1],
-      )
-    elif orig_ndims == 4:
-      image = einops.rearrange(
-          image,
-          "h w (b c) -> b h w c ",
-          b=orig_shape[0],
-          c=orig_shape[-1],
-      )
-    return image
-
-  return crop_and_resize
-
-
-@Registry.register("preprocess_ops.simclr_random_color_jitter", replace=True)
-@pp_utils.InKeyOutKey(with_data=False)
-def get_simclr_random_color_jitter(p=1.0, strength=0.5):
-  """Applies color jittering as in simclv."""
-
-  def _simclr_random_color_jitter(image):
-    # TODO(crisnv): review jitter in grayscale
-    if image.shape[-1] == 1:
-      return image
-    # Includes gray-scale (20% chance) and various color jitter (80% chance)
-    # with hue, contrast, saturation and brightness in random order.
-    return simclr_data_util.random_color_jitter(image, p=p, strength=strength)
-
-  return _simclr_random_color_jitter
-
-
 @Registry.register("preprocess_ops.random_fill_along_dim", replace=True)
 @pp_utils.InKeyOutKey(with_data=False)
 def get_random_fill_along_dim(*, axis=1, probability=0.25, fill_value=0):
@@ -543,55 +500,6 @@ def get_flip_ud_with_label(outkey="flipped", key="image"):
   return _pp
 
 
-@Registry.register("preprocess_ops.cutout", replace=True)
-@pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_cutout(size=20, replace=128):
-  """Cuts out a square of fixed `size` pixes at random position."""
-
-  def _pp(image):
-    # randaug cutout expects pad size which is half of cut window size.
-    image = randaug_geo.cutout(image, size // 2, replace)
-    return image
-
-  return _pp
-
-
-@Registry.register("preprocess_ops.cutout_randsize", replace=True)
-@pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_cutout_randsize(min_size_ratio=0.1, max_size_ratio=0.5, replace=128):
-  """Cuts out a random-sized box at random position.
-
-  Args:
-    min_size_ratio: Min size ratio.
-    max_size_ratio: Max size ratio. Can be equal to min_size_ratio. Then the
-      cutbox size will be deterministic (preserving image aspect ratio).
-    replace: Replace value (it can be tf array for channel-dependent values).
-
-  Returns:
-    pp op which randomly determines cutbox size and location for replacing their
-      values with `replace`.
-  """
-
-  def _pp(image):
-    h = tf.cast(tf.shape(image)[0], tf.float32)
-    w = tf.cast(tf.shape(image)[1], tf.float32)
-    pad_h = tf.random.uniform(
-        [],
-        minval=tf.cast(h * min_size_ratio / 2.0, tf.int32),
-        maxval=tf.cast(h * max_size_ratio / 2.0 + 1, tf.int32),
-        dtype=tf.int32,
-    )
-    pad_w = tf.random.uniform(
-        [],
-        minval=tf.cast(w * min_size_ratio / 2.0, tf.int32),
-        maxval=tf.cast(w * max_size_ratio / 2.0 + 1, tf.int32),
-        dtype=tf.int32,
-    )
-    return randaug_geo.cutout(image, (pad_h, pad_w), replace)
-
-  return _pp
-
-
 @Registry.register("preprocess_ops.random_resize", replace=True)
 def get_random_resize(
     ref_size,
@@ -629,47 +537,11 @@ def get_random_flip_ud():
 
   # Note, instead of using this op, for satellite data prefer to get the 8
   # random combinations with "|flip_lr|rot90".
-  # TODO(mnn): Support for such random operations flipping labels & masks.
+  # TODO: Support for such random operations flipping labels & masks.
   def _pp(image):
     return tf.image.random_flip_up_down(image)
 
   return _pp
-
-
-@Registry.register("preprocess_ops.randaug_geo", replace=True)
-@pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_randaug_geo(
-    num_layers: int = 2,
-    magnitude: int = 10,
-    translate: int = 10,
-    cutout: int = 20,
-    ops: Sequence[str] | None = None,
-):
-  """Creates a function that applies RandAugment.
-
-  RandAugment is from the paper https://arxiv.org/abs/1909.13719,
-
-  Args:
-    num_layers: Integer, the number of augmentation transformations to apply
-      sequentially to an image. Represented as (N) in the paper. Usually best
-      values will be in the range [1, 3].
-    magnitude: Integer, shared magnitude across all augmentation operations.
-      Represented as (M) in the paper. Usually best values are in the range [5,
-      30].
-    translate: Integer, the max amount used for translate ops.
-    cutout: Integr, the max amount used in the cutout op.
-    ops: The subset of augmentation operations to choose from. Default to all.
-
-  Returns:
-    A function that applies RandAugment.
-  """
-
-  def _randaug(image):
-    return randaug_geo.distort_image_with_randaugment(
-        image, num_layers, magnitude, translate, cutout, ops
-    )
-
-  return _randaug
 
 
 @Registry.register("preprocess_ops.clear_boundary", replace=True)
@@ -740,8 +612,6 @@ def get_tanh_value_range(
 ):
   """Normalizing image pixels by a scaled tanh function.
 
-  From:
-  http://google3/learning/multipod/pax/climate/processors.py;l=481;rcl=648357105
   Args:
     mean: Tuple of values to be subtracted.
     std: Tuple of values to be divided by.

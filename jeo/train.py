@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simple big_vision-based trainer."""
+"""Simple trainer."""
 # pylint: disable=logging-fstring-interpolation, invalid-name
 from functools import partial  # pylint: disable=g-importing-member
 import multiprocessing.pool
@@ -22,8 +22,6 @@ import time
 from absl import app
 from absl import flags
 from absl import logging
-import big_vision.optax as bv_optax
-import big_vision.utils as bv_utils
 from clu import parameter_overview
 import flax
 import jax
@@ -35,17 +33,15 @@ from jeo.components import early_stopping
 from jeo.components import mixup
 from jeo.evaluators import builder as eval_builder
 from jeo.tasks import task_builder
+from jeo.tools import bv_optax
+from jeo.tools import bv_utils
 from jeo.tools import inspect
 from jeo.tools import metric_writers
 from ml_collections import config_flags
 import numpy as np
 import optax
 
-from google3.devtools.python.contrib import g3pdb
-from google3.learning.brain.python.debug_server import debug_server  # pylint: disable=unused-import
-import google3.learning.deepmind.xmanager2.client.google as xm
-import google3.learning.deepmind.xmanager2.client.xmanager_api as xm_api
-from google3.pyglib import gfile
+from tensorflow.io import gfile
 
 config_flags.DEFINE_config_file(
     "config", None, "Training configuration.", lock_config=True)
@@ -58,11 +54,6 @@ FLAGS = flags.FLAGS
 
 def _main(_):  # pylint: disable=missing-function-docstring
   # ## Trainer section 1: Setup.
-  bv_utils.maybe_reuse_xm_experiment()
-  try:
-    bv_utils.add_log_artifacts()
-  except NotImplementedError:
-    logging.warning("Probably running in local mode.")
 
   config = FLAGS.config
   workdir = FLAGS.workdir
@@ -71,7 +62,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
       f"{jax.local_device_count()}/{jax.device_count()} devices and "
       f"writing to workdir {workdir}.\u001b[0m")
   train_utils.validate_and_update_config_inplace(config)
-  gfile.MakeDirs(workdir, mode=gfile.LEGACY_GROUP_WRITABLE_WORLD_READABLE)
+  os.umask(0o022); gfile.makedirs(workdir)
 
   # The pool is used to perform misc operations such as logging in async way.
   pool = multiprocessing.pool.ThreadPool()
@@ -85,21 +76,14 @@ def _main(_):  # pylint: disable=missing-function-docstring
   # This seed makes the Jax part of things (like model init) deterministic.
   # However, full training still won't be deterministic, for example due to the
   # tf.data pipeline not being deterministic even if we would set TF seed.
-  # See go/deterministic-training for a fun read on what it takes.
+  # See (internal link) for a fun read on what it takes.
   rng = jax.random.PRNGKey(config.get("seed", 0))
 
-  # Parse XM params and setup XManager API
-  xm.setup_work_unit()
-  xm_xp = xm_api.XManagerApi().get_current_experiment()
-  xm_wu = xm_api.XManagerApi().get_current_work_unit()
-  XID, WID = xm_xp.id, xm_wu.id
-
-  if workdir:
-    xm_wu.create_artifact(
-        xm_api.ArtifactType.ARTIFACT_TYPE_DIRECTORY, workdir, "Workdir on CNS")
-    xm_wu.create_artifact(
-        xm_api.ArtifactType.ARTIFACT_TYPE_STORAGE2_BIGTABLE,
-        f"/datatable/xid/{XID}/data:{WID}", "datatable")
+  xid, wid = -1, -1
+  fillin = lambda s: s
+  def write_note(note):
+    if jax.process_index() == 0:
+      logging.info("\u001b[33mNOTE\u001b[0m: %s", note)
 
   last_time_set_notes = 0
   notes_wait_time = config.get("notes_wait_time", 0)
@@ -115,14 +99,6 @@ def _main(_):  # pylint: disable=missing-function-docstring
       logging.info("NOTE: %s", note)
   write_note("Initializing...")
 
-  def fillin(s):
-    """Fills-in a few experiment/work-unit pattern in strings at runtime."""
-    if s is None: return None
-    # If the following line fails, you're using `runlocal` but also `{cell}` in
-    # some string. These two are not reconcileable; think again what you want.
-    cell = xm_xp.borg_jobs_details[0].cell if "{cell}" in s else None
-    return s.format(xid=XID, wid=WID, cell=cell)
-
   batch_size = config.batch_size
   local_batch_size = batch_size // jax.process_count()
   if batch_size % jax.device_count() != 0:
@@ -136,8 +112,8 @@ def _main(_):  # pylint: disable=missing-function-docstring
       local_batch_size // jax.local_device_count())
 
   mw = metric_writers.MetricWriter(
-      XID, WID, xmeasurements=config.get("use_xmeasurements", True),
-      flush_immediately=config.get("flush_immediately", True))
+      xid, wid,
+  )
   chrono = bv_utils.Chrono()
 
   # ## Trainer section 2: Datasets initialization.
@@ -156,7 +132,9 @@ def _main(_):  # pylint: disable=missing-function-docstring
       shuffle_buffer_size=config.get("shuffle_buffer_size"),
       prefetch=config.get("prefetch_to_host", 2),
       cache_raw=config.get("cache_raw", False),
-      skip_decode=config.get("skip_decode", ("image",)))
+      skip_decode=config.get("skip_decode", ("image",)),
+      download_and_prepare=config.get("download_and_prepare", False),
+      )
   # Start prefetching already.
   train_iter = input_pipeline.start_input_pipeline(
       train_ds, config.get("prefetch_to_device", 1))
@@ -298,7 +276,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
   # 3. Initialize model from something, e,g, start a fine-tuning job.
   # 4. Train from scratch.
   resume_ckpt_path = None
-  if save_ckpt_path and gfile.Exists(save_ckpt_path):
+  if save_ckpt_path and gfile.exists(save_ckpt_path):
     resume_ckpt_path = save_ckpt_path
   elif config.get("resume"):
     resume_ckpt_path = fillin(config.resume)
@@ -412,7 +390,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
                                      config.get("ckpt_timeout", 1))
       # We need to transfer the weights over now or else we risk keeping them
       # alive while they'll be updated in a future step, creating hard to debug
-      # memory errors (see b/160593526). Also, takes device 0's params only.
+      # memory errors (see (internal link)). Also, takes device 0's params only.
       params_cpu = jax.tree.map(lambda x: np.array(x[0]), params_repl)
       opt_cpu, state_cpu = jax.tree.map(lambda x: np.array(x[0]),
                                         (opt_repl, state_repl))

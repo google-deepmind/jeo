@@ -16,11 +16,10 @@
 import abc
 
 from absl import logging
-import big_vision.pp.builder as pp_builder
 import jax
 from jeo import input_pipeline
 from jeo import train_utils
-from jeo.lumascope import dummy as dummy_lumascope
+from jeo.pp import pp_builder
 
 
 class EvaluatorBase(abc.ABC):
@@ -61,15 +60,6 @@ class EvaluatorBase(abc.ABC):
                        f"batch_size_eval: {batch_size}")
     self.data_iter = input_pipeline.start_input_pipeline(
         ds, data_config.get("prefetch_to_device", 1))
-
-  def _get_lumascope(self, cfg, default_type):
-    if not cfg:  # Dummy lumascope builder that just passes any calls.
-      return dummy_lumascope.Lumascope(None)
-    lumascope_module = cfg.pop("type", default_type)
-    lumascope_cls = train_utils.import_module(lumascope_module, "lumascope")
-    if not callable(lumascope_cls):
-      lumascope_cls = getattr(lumascope_cls, "Lumascope")
-    return lumascope_cls(**cfg)
 
 
 def from_config(config, predict_fn, write_note=lambda s: s, get_steps=None,
