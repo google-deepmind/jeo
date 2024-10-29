@@ -14,7 +14,7 @@
 
 """Preprocessing builder with registry from big_vision.
 
-Based on (internal link)/py/big_vision/pp/builder.py
+Based on http://github.com/google-research/big_vision/tree/HEAD/big_vision/pp/builder.py
 
 Authors: Joan Puigcerver, Alexander Kolesnikov.
 """

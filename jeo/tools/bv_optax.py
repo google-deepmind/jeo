@@ -14,7 +14,7 @@
 
 """Gradient transformations and other optax utilities.
 
-Based on (internal link)/py/big_vision/optax.py
+Based on http://github.com/google-research/big_vision/tree/HEAD/big_vision/optax.py
 """
 
 import operator

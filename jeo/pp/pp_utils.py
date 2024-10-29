@@ -77,7 +77,7 @@ def load_normalization_ranges(path, split_name="train", postfix=None,
 class InKeyOutKey(object):
   """Decorator for preprocessing for single-input sinle-output ops.
 
-  From (internal link)/py/big_vision/pp/utils.py;l=12;rcl=675470346
+  From http://github.com/google-research/big_vision/tree/HEAD/big_vision/pp/utils.py;l=12;rcl=675470346
 
   Attributes:
     indefault: The default input key. If None, `key` or `inkey` must be

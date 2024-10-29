@@ -14,7 +14,7 @@
 
 """Utils very specific to this project, not generic.
 
-Based on (internal link)/py/big_vision/utils.py
+Based on http://github.com/google-research/big_vision/tree/HEAD/big_vision/utils.py
 """
 
 import collections

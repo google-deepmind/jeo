@@ -14,7 +14,7 @@
 
 """ResNet V1 with GroupNorm.
 
-Forked from (internal link)/py/big_vision/models/bit.py
+Forked from http://github.com/google-research/big_vision/tree/HEAD/big_vision/models/bit.py
 to support addaptive num_groups in GroupNorm.
 """
 from typing import Optional, Sequence, Union

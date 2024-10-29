@@ -24,7 +24,7 @@ TRANSFORMERS = {
     "small": dict(num_layers=8, num_heads=8, mlp_dim=2048, emb_dim=512),
     "base": dict(num_layers=12, num_heads=12, mlp_dim=3072, emb_dim=768),
     "large": dict(num_layers=24, num_heads=16, mlp_dim=4096, emb_dim=1024),
-    # ViT: (internal link)/py/big_vision/models/vit.py?l=243-246
+    # ViT: http://github.com/google-research/big_vision/tree/HEAD/big_vision/models/vit.py?l=243-246
     # Rules (up until L): mlp=emb*4; num_heads=emb/64.
     "TinyToy": dict(num_layers=3, num_heads=1, mlp_dim=192, emb_dim=48),
     "Toy": dict(num_layers=6, num_heads=2, mlp_dim=384, emb_dim=96),

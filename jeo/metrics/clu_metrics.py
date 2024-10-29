@@ -964,7 +964,7 @@ def onehot(labels, num_classes, on_value=1.0, off_value=0.0):
   return x.astype(jnp.float32)
 
 
-# Copied from (internal link)/py/clu/metrics.py?l=58-61&rcl=350556413
+# Copied from http://github.com/google/CommonLoopUtils/tree/HEAD/clu/metrics.py?l=58-61&rcl=350556413
 def _assert_same_shape(a: jnp.ndarray, b: jnp.ndarray):
   """Raises a `ValueError` if shapes of `a` and `b` don't match."""
   if a.shape != b.shape:
