@@ -1,0 +1,31 @@
+# Compiled python modules.
+*.pyc
+
+# Byte-compiled
+_pycache__/
+.cache/
+
+# Poetry, setuptools, PyPI distribution artifacts.
+/*.egg-info
+.eggs/
+build/
+dist/
+poetry.lock
+
+# Tests
+.pytest_cache/
+
+# Type checking
+.pytype/
+
+# Mac
+*.DS_Store
+
+# PyCharm
+.idea
+
+# VS Code
+.vscode
+
+# emacs
+*~

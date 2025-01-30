@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 import json
 import os
+from typing import Any
 
 import ml_collections
 
@@ -24,13 +25,18 @@ from tensorflow.io import gfile
 BAND_PREFIX = "_band_"
 
 
-def load_json(path, split_name=None, postfix=None, as_cd=False,
-              drop_support=True):
+def load_json(
+    path: str,
+    split_name: str | None = None,
+    postfix: str | None = None,
+    as_cd: bool = False,
+    drop_support: bool = True,
+) -> dict[Any, Any] | ml_collections.ConfigDict:
   """Returns dict of accumulated stats."""
   full_path = standardized_path(path, split_name, postfix)
   if gfile.exists(full_path):
     with gfile.GFile(full_path, "r") as f:
-      d = json.load(f)
+      d = dict(json.load(f))
   else:
     full_path = standardized_path(path, split_name, postfix + BAND_PREFIX + "*")
     d = {}
@@ -60,7 +66,8 @@ def load_json(path, split_name=None, postfix=None, as_cd=False,
   return d
 
 
-def standardized_path(path, split_name=None, postfix=None):
+def standardized_path(path: str, split_name: str | None = None,
+                      postfix: str | None = None) -> str:
   """Constructs/adjusts full path for json file."""
   if split_name:
     path = os.path.join(path, split_name)

@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ class MultitaskClassificationTask(task_builder.TaskBase):
       aux[f"loss_{task_name}"] = loss
       task_losses.append(loss)
       task_accuracies.append(aux[f"acc_{task_name}"])
-    # Loss aggreation. Simple sum of multi-task losses for now.
+    # Loss aggregation. Simple sum of multi-task losses for now.
     loss = jnp.sum(jnp.asarray(task_losses), axis=0)
     aux["acc"] = jnp.mean(jnp.asarray(task_accuracies), axis=0)
     if train:

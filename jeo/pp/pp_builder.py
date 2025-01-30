@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,14 +19,17 @@ Based on http://github.com/google-research/big_vision/tree/HEAD/big_vision/pp/bu
 Authors: Joan Puigcerver, Alexander Kolesnikov.
 """
 import ast
+from collections.abc import Callable
 import contextlib
 import functools
+from typing import Any
 
 from absl import logging
 import tensorflow as tf
 
 
-def get_preprocess_fn(pp_pipeline, log_data=True, log_steps=False):
+def get_preprocess_fn(pp_pipeline: str | None, log_data: bool = True,
+                      log_steps: bool = False) -> Callable[[Any], Any]:
   """Transform an input string into the preprocessing function.
 
   The minilanguage is as follows:
@@ -106,8 +109,6 @@ def parse_name(string_to_parse):
       "multiclass" -> ("multiclass", (), {})
       "resnet50_v2(9, filters_factor=4)" ->
           ("resnet50_v2", (9,), {"filters_factor": 4})
-
-  Author: Joan Puigcerver (jpuigcerver@)
   """
   expr = ast.parse(string_to_parse, mode="eval").body  # pytype: disable=attribute-error
   if not isinstance(expr, (ast.Attribute, ast.Call, ast.Name)):
@@ -151,8 +152,6 @@ def parse_name(string_to_parse):
 
 class Registry(object):
   """Implements global Registry.
-
-  Authors: Joan Puigcerver (jpuigcerver@), Alexander Kolesnikov (akolesnikov@)
   """
 
   _GLOBAL_REGISTRY = {}
@@ -202,7 +201,7 @@ def temporary_ops(**kw):
 
   Example use:
 
-    with pp_registry.remporary_ops(
+    with pp_registry.temporary_ops(
         pow=lambda alpha: lambda d: {k: v**alpha for k, v in d.items()}):
       pp = pp_builder.get_preprocess_fn("pow(alpha=2.0)|pow(alpha=0.5)")
       features = pp(features)

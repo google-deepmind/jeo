@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,13 +14,15 @@
 
 """Gradient transformations and other optax utilities.
 
-Based on http://github.com/google-research/big_vision/tree/HEAD/big_vision/optax.py
+Based on
+https://github.com/google-research/big_vision/blob/main/big_vision/utils.py
 """
 
 import operator
 import jax
 import jax.numpy as jnp
-from jeo.tools import bv_utils as u
+from jeo import train_utils
+from jeo.tools import tree_utils
 import optax
 
 
@@ -49,7 +51,7 @@ def replace_frozen(schedule, pytree, replacement, log=None):
   if not isinstance(schedule, (list, tuple)):
     return pytree
   masks, scheds = _make_mask_trees(pytree, schedule, log=log)
-  frozen_mask, _, _ = _split_frozen(masks, scheds)
+  frozen_mask, _, _ = tree_utils.split_frozen(masks, scheds)
   return jax.tree.map(
       lambda v, f: replacement if f else v, pytree, frozen_mask)
 
@@ -83,11 +85,11 @@ def make(config, params, *, sched_kw):
   if not isinstance(schedule, (tuple, list)):
     schedule = [(".*", schedule)]
   masks, scheds = _make_mask_trees(params, schedule, "config.schedule")
-  frozen_mask, masks, scheds = _split_frozen(masks, scheds)
+  frozen_mask, masks, scheds = tree_utils.split_frozen(masks, scheds)
   not_frozen_mask = jax.tree.map(operator.not_, frozen_mask)
   def create_schedule(mult=1.0, **kw):
     assert "base" not in kw, kw
-    return u.create_learning_rate_schedule(base=mult, **kw)
+    return create_learning_rate_schedule(base=mult, **kw)
   schedule_fns = [create_schedule(**sched_kw, **sched) for sched in scheds]
   schedule_txs = [
       optax.masked(optax.scale_by_schedule(schedule_fn), mask)
@@ -154,37 +156,8 @@ def make(config, params, *, sched_kw):
 
 def _make_mask_trees(params, patterns_values, log):
   patterns, values = zip(*patterns_values)
-  masks = u.make_mask_trees(params, patterns, log=log)
+  masks = tree_utils.make_mask_trees(params, patterns, log=log)
   return masks, values
-
-
-def _split_frozen(masks, scheds):
-  """Computes `frozen_mask` and updates `masks` and `scheds`."""
-  # Specifying `None` as a scheduler freezes params.
-  all_false = jax.tree.map(lambda *bools: not any(bools), *masks)
-  not_covered = [k for k, v in u.tree_flatten_with_names(all_false)[0] if v]
-  assert not not_covered, (
-      f"All params must be covered (use `None` for freezing): {not_covered}")
-  frozen_masks = [
-      mask for mask, sched in zip(masks, scheds) if sched is None]
-  frozen_mask = jax.tree.map(
-      lambda *bools: any(bools), *frozen_masks,
-      all_false)  # `all_false` is required when `frozen_masks==[]`.
-  masks, scheds = zip(*(
-      (mask, sched) for mask, sched in zip(masks, scheds) if sched is not None))
-  return frozen_mask, masks, scheds
-
-
-############ Custom BigVision optimizers #######################################
-# Currently there's only one custom optimizer and we don't foresee new ones in
-# the near future, we opt not to create a new optimizer folder/module for just
-# one isolated case. If there will be more optimizers, we can consider moving
-# them into individual files in a subfolder.
-
-
-# A dummy object to allow for foo.bar access syntax, see
-# https://stackoverflow.com/a/19476841/2366315
-optax.big_vision = type("", (), {})()
 
 
 def scale_by_adafactor(min_dim_size_to_factor=32,
@@ -216,13 +189,104 @@ def scale_by_adafactor(min_dim_size_to_factor=32,
 
   return optax.chain(scale_by_rms, clip, mom)
 
-optax.big_vision.scale_by_adafactor = scale_by_adafactor  # pytype: disable=module-attr
 
-
-# A few more aliases we use frequently:
 def momentum_hp(momentum=0.9, dtype=jnp.bfloat16, nesterov=False):
   """SGD-Momentum with half-precision accumulator."""
   return optax.trace(decay=momentum, accumulator_dtype=dtype, nesterov=nesterov)
 
+
+# Aliases for custom optimizers.
+# A fake object to allow for foo.bar access syntax, see
+# https://stackoverflow.com/a/19476841/2366315
+optax.big_vision = type("", (), {})()
+optax.big_vision.scale_by_adafactor = scale_by_adafactor  # pytype: disable=module-attr
 optax.big_vision.momentum_hp = momentum_hp  # pytype: disable=module-attr
 optax.big_vision.sgd = optax.identity  # pytype: disable=module-attr
+
+
+def create_learning_rate_schedule(
+    total_steps,
+    batch_size=None,
+    data_size=None,
+    base=1.0,
+    decay_type="stair",
+    scale_with_batchsize=False,
+    **kw,
+):
+  """Creates learning rate schedule.
+
+  Args:
+    total_steps: The total number of steps to run.
+    batch_size: The global batch-size optionally used for scaling.
+    data_size: Number of examples in the training data (for epoch conversion).
+    base: The starting learning-rate (without warmup).
+    decay_type: 'linear' or 'cosine', 'rsqrt', 'stair'.
+    scale_with_batchsize: Whether or not to scale lr automatically.
+    **kw: extra arguments specific to individual decay_types. Also contains
+      declaration of `{warmup,cooldown}_{steps,epochs,examples}` that applies on
+      top of any/all decay_type.
+
+  Returns:
+    A function learning_rate(step): float -> {"learning_rate": float}.
+  """
+
+  def to_steps(name, default=0):
+    return train_utils.steps(name, kw, data_size, batch_size, total_steps,
+                             default=default)
+
+  warmup_steps = to_steps("warmup")
+  cooldown_steps = to_steps("cooldown")
+  frozen_steps = to_steps("frozen")
+
+  # Early catch hard to backtrack errors due to warmup_steps >= total_steps,
+  # but let it run for 0 and 1 steps used to eval and debug runs.
+  assert (total_steps <= 1) or (
+      warmup_steps < total_steps
+  ), "warmup_steps is >= total_steps"
+
+  def step_fn(step):
+    """Step to learning rate function."""
+    lr = base
+
+    # This implements the linear scaling rule following
+    # Goyal et al. at arxiv.org/abs/1706.02677.
+    # The reference batch size in literature is 256, so we scale the lr to
+    # adjust to the literature lr when bach_size changes.
+    if scale_with_batchsize:
+      lr = lr * batch_size / 256.0
+
+    progress = (step - warmup_steps - frozen_steps) / (
+        total_steps - warmup_steps - frozen_steps
+    )
+    progress = jnp.clip(progress, 0.0, 1.0)
+    if decay_type in ("linear", "polynomial"):
+      power = kw.get("power", 1)
+      zero = kw.get("end", kw.get("linear_end", 0))
+      lr = zero + (lr - zero) * (1.0 - progress) ** power
+    elif decay_type == "cosine":
+      lr = lr * 0.5 * (1.0 + jnp.cos(jnp.pi * progress))
+    elif decay_type == "rsqrt":
+      # See (internal link) for details, especially how to set timescale
+      # and shift in order to continue smoothly when changing batch-size.
+      t = to_steps("timescale", default=kw.get("timescale", 10_000))
+      shift = to_steps("shift", default=kw.get("shift", 0))
+      lr = jnp.where(
+          warmup_steps <= step,
+          lr / jnp.sqrt(1 + (step + shift - warmup_steps) / t),  # In decay
+          lr / jnp.sqrt(1 + shift / t),
+      )  # In warmup.
+    elif decay_type == "stair":
+      i = jnp.searchsorted(jnp.array(kw.get("steps", [])), step + 1)
+      lr = lr * jnp.take(jnp.array([1.0] + list(kw.get("mults", []))), i)
+    else:
+      raise ValueError(f"Unknown lr type {decay_type}")
+
+    if warmup_steps:
+      lr = lr * jnp.minimum(1.0, (step - frozen_steps) / warmup_steps)
+    if cooldown_steps:
+      lr = lr * jnp.minimum(1.0, (total_steps - step) / cooldown_steps)
+    lr = jnp.where(step < frozen_steps, 0.0, lr)
+
+    return jnp.asarray(lr, dtype=jnp.float32)
+
+  return step_fn

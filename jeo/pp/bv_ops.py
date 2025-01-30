@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,17 +13,26 @@
 # limitations under the License.
 
 """Preprocessing ops forked from big_vision code base."""
+from collections.abc import Sequence
+from typing import Any
+
 import jax
 from jeo.pp import pp_utils
 from jeo.pp.pp_builder import Registry  # pylint: disable=g-importing-member
-from jeo.tools import bv_utils
+from jeo.tools import tree_utils
 import numpy as np
 import tensorflow as tf
 
 
 @Registry.register("preprocess_ops.value_range")
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_value_range(vmin=-1, vmax=1, in_min=0, in_max=255.0, clip_values=False):
+def get_value_range(
+    vmin: int | float = -1,
+    vmax: int | float = 1,
+    in_min: int | float = 0,
+    in_max: int | float = 255.0,
+    clip_values: bool = False,
+):
   """Transforms a [in_min,in_max] image to [vmin,vmax] range.
 
   Input ranges in_min/in_max can be equal-size lists to rescale the invidudal
@@ -58,7 +67,7 @@ def get_value_range(vmin=-1, vmax=1, in_min=0, in_max=255.0, clip_values=False):
 
 @Registry.register("preprocess_ops.lookup")
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_lookup(mapping, npzkey="fnames", sep=None):
+def get_lookup(mapping: str, npzkey: str = "fnames", sep: str | None = None):
   """Map string to number."""
 
   # For NumPy files, we use the `npzkey` array in that file as the list of
@@ -95,12 +104,12 @@ def get_lookup(mapping, npzkey="fnames", sep=None):
 
 
 @Registry.register("preprocess_ops.onehot")
-def get_onehot(depth,
-               key="labels",
-               key_result=None,
-               multi=True,
-               on=1.0,
-               off=0.0):
+def get_onehot(depth: int,
+               key: str = "labels",
+               key_result: str | None = None,
+               multi: bool = True,
+               on: float = 1.0,
+               off: float = 0.0):
   """One-hot encodes the input.
 
   Args:
@@ -133,7 +142,7 @@ def get_onehot(depth,
 
 
 @Registry.register("preprocess_ops.keep")
-def get_keep(*keys):
+def get_keep(*keys: Sequence[str]):
   """Keeps only the given keys."""
 
   def _keep(data):
@@ -143,7 +152,7 @@ def get_keep(*keys):
 
 
 @Registry.register("preprocess_ops.drop")
-def get_drop(*keys):
+def get_drop(*keys: Sequence[str]):
   """Drops the given keys."""
 
   def _drop(data):
@@ -153,7 +162,7 @@ def get_drop(*keys):
 
 
 @Registry.register("preprocess_ops.copy")
-def get_copy(inkey, outkey):
+def get_copy(inkey: str, outkey: str):
   """Copies value of `inkey` into `outkey`."""
 
   def _copy(data):
@@ -176,7 +185,8 @@ def get_squeeze_last_dim():
 
 
 @Registry.register("preprocess_ops.concat")
-def get_concat(inkeys, outkey=None, axis=-1):
+def get_concat(inkeys: Sequence[str], outkey: str | None = None,
+               axis: int = -1):
   """Concatenates elements along some axis."""
 
   def _concat(data):
@@ -200,7 +210,8 @@ def get_rag_tensor():
 
 @Registry.register("preprocess_ops.pad_to_shape")
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_pad_to_shape(shape, pad_value=0, where="after"):
+def get_pad_to_shape(shape: Sequence[int], pad_value: int = 0,
+                     where: str = "after"):
   """Pads tensor to specified `shape`."""
 
   def _pads(cur, tgt):
@@ -230,7 +241,7 @@ def get_flatten():
   """Flattens the keys of data with separator '/'."""
 
   def flatten(data):
-    flat, _ = bv_utils.tree_flatten_with_names(data)
+    flat, _ = tree_utils.tree_flatten_with_names(data)
     return dict(flat)
 
   return flatten
@@ -238,7 +249,7 @@ def get_flatten():
 
 @Registry.register("preprocess_ops.reshape")
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_reshape(new_shape):
+def get_reshape(new_shape: Sequence[int]):
   """Reshapes tensor to a given new shape.
 
   Args:
@@ -259,7 +270,7 @@ def get_reshape(new_shape):
 
 
 @Registry.register("preprocess_ops.setdefault")
-def get_setdefault(key, value):
+def get_setdefault(key: str, value: Any):
   """If `key` is an empty tensor, set it to `value`."""
   def _setdefault(data):
     x = data[key]
@@ -271,7 +282,8 @@ def get_setdefault(key, value):
 
 
 @Registry.register("preprocess_ops.choice")
-def get_choice(n="single", inkey=None, outkey=None, key=None):
+def get_choice(n: int | str = "single", inkey: str | None = None,
+               outkey: str | None = None, key: str | None = None):
   """Chooses the same `n` random entries of all `keys`.
 
   Args:

@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,13 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inspect tools/utils for programatic and interactive usage."""
+"""Inspect tools/utils for programmatic and interactive usage."""
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
+
 import flax
 import jax
 import numpy as np
 
+PyTree = Sequence[Any] | Mapping[Any, Any]
 
-def pytree_paths(param_tree, annotate_types=False, as_kv=False):
+
+def pytree_paths(
+    param_tree: PyTree,
+    annotate_types: bool = False,
+    as_kv: bool = False,
+) -> Iterable[str | tuple[str, Any]]:
   """Returns a generator for pytree path names."""
   if annotate_types:
     type_path_names = {list: "LIST:", tuple: "TUPLE:", dict: "DICT:",
@@ -43,7 +52,7 @@ def pytree_paths(param_tree, annotate_types=False, as_kv=False):
     yield return_val(path_name, param_tree)  # LEAF
 
 
-def pytree_paths_split(d):
+def pytree_paths_split(d: Mapping[str, Any]) -> dict[str, Any]:
   """Given dict with compressed keys, expand to a nested dict."""
   # {"a/b/c": 1, "a/b/d/e": 3} --> {"a": {"b": {"c": 1, "d": {"e": 3}}}}
   new_d = {}
@@ -57,7 +66,9 @@ def pytree_paths_split(d):
   return new_d
 
 
-def pytree_paths_flatten(d, sep="/", seq_is_leaf=False):
+def pytree_paths_flatten(
+    d: Mapping[Any, Any], sep: str = "/", seq_is_leaf: bool = False
+) -> dict[str, Any]:
   """Given dict with nested keys, flatten to a dict with compressed keys."""
   # {"a": {"b": {"c": 1, "d": {"e": 3}}}} --> {"a/b/c": 1, "a/b/d/e": 3}
   # {"a": {"b": [1, 2]}} --> {"a/b/0": 1, "a/b/1": 2}
@@ -69,11 +80,11 @@ def pytree_paths_flatten(d, sep="/", seq_is_leaf=False):
   return {_flattened_key(k, sep): v for k, v in flattened}
 
 
-def _flattened_key(k, sep):
+def _flattened_key(k: Sequence[Any], sep: str) -> str:
   return sep.join(x.key if hasattr(x, "key") else str(x.idx) for x in k)
 
 
-def pytree_list_to_dict(list_of_dicts):
+def pytree_list_to_dict(list_of_dicts: list[Any]) -> dict[Any, Any]:
   """Given list of dicts, convert to dict of lists."""
   #  [{"a": 1, "b": 2}, {"a": 3, "b": 4}] --> {"a": [1, 3], "b": [2, 4]}
   if not list_of_dicts: return {}
@@ -81,7 +92,8 @@ def pytree_list_to_dict(list_of_dicts):
   return jax.tree.map(stack_args, *list_of_dicts)
 
 
-def tree_info(tree, annotate_types=False, type_and_counts=True):
+def tree_info(tree: PyTree, annotate_types: bool = False,
+              type_and_counts: bool = True):
   """Prints info (path, dtype, shape) per leaf."""
   num_params, num_vars = 0, 0
   for k, v in pytree_paths(tree, annotate_types=annotate_types, as_kv=True):
@@ -97,12 +109,12 @@ def tree_info(tree, annotate_types=False, type_and_counts=True):
     print(f"  Number of variables: {num_vars}; total size: {num_params:,}")
 
 
-def normalize(arr,
-              channel_dependent=False,
-              bottom_perc=1,
-              top_perc=99,
-              verbose=False,
-              clip=True):
+def normalize(arr: np.ndarray,
+              channel_dependent: bool = False,
+              bottom_perc: int = 1,
+              top_perc: int = 99,
+              verbose: bool = False,
+              clip: bool = True):
   """Normalizes numpy array per channel or globally.
 
   Args:
@@ -130,7 +142,8 @@ def normalize(arr,
     return _rescale(arr)
 
 
-def normalize_with_minmax(arr, min_value, max_value, clip=True):
+def normalize_with_minmax(arr: np.ndarray, min_value: float, max_value: float,
+                          clip: bool = True) -> np.ndarray:
   """Normalizes array to [0, 1] with given min/max values."""
   if clip:
     arr = np.clip(arr, min_value, max_value)
@@ -138,7 +151,8 @@ def normalize_with_minmax(arr, min_value, max_value, clip=True):
   return arr
 
 
-def stats_str(arr, f=None, with_median=False, with_count=False):
+def stats_str(arr: Any, f: str | None = None, with_median: bool = False,
+              with_count: bool = False) -> str:
   """Returns a string with main stats info about the given array.
 
   By default, the string has the form: "mean +/- standard_deviation [min..max]"
@@ -178,7 +192,7 @@ def stats_str(arr, f=None, with_median=False, with_count=False):
       arr.mean(), arr.std(), arr.min(), arr.max()) + median + count
 
 
-def stats(arr, *args, title=None, **kwargs):
+def stats(arr: Any, *args, title: str | None = None, **kwargs):
   """Prints out stats about given array."""
   s = stats_str(arr, *args, **kwargs)
   if title:
@@ -187,7 +201,7 @@ def stats(arr, *args, title=None, **kwargs):
     print(s)
 
 
-def to_np(x):
+def to_np(x: Any) -> np.ndarray | dict[Any, np.ndarray]:
   """Converts `x` to numpy (including bytes to strings and nested dicts)."""
   if isinstance(x, dict):
     return jax.tree.map(to_np, x)
@@ -201,7 +215,7 @@ def to_np(x):
   return np.asarray(x)
 
 
-def iter_to_np(iterable, n=10):
-  """Returns first n elements from an interable as numpy arrays."""
+def iter_to_np(iterable: Iterable[Any], n: int = 10) -> list[np.ndarray]:
+  """Returns first n elements from an iterable as numpy arrays."""
   # Useful eg. for quickly getting examples from a tf.data.Dataset or iterator.
   return [jax.tree.map(to_np, x) for _, x in zip(range(n), iterable)]

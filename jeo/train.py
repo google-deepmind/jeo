@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ from clu import parameter_overview
 import flax
 import jax
 import jax.numpy as jnp
-from jeo import checkpointing
 from jeo import input_pipeline
 from jeo import train_utils
 from jeo.components import early_stopping
@@ -34,7 +33,7 @@ from jeo.components import mixup
 from jeo.evaluators import builder as eval_builder
 from jeo.tasks import task_builder
 from jeo.tools import bv_optax
-from jeo.tools import bv_utils
+from jeo.tools import checkpointing
 from jeo.tools import inspect
 from jeo.tools import metric_writers
 from ml_collections import config_flags
@@ -48,11 +47,17 @@ config_flags.DEFINE_config_file(
 flags.DEFINE_string("workdir", default=None, help="Work unit directory.")
 flags.DEFINE_boolean("cleanup", default=False,
                      help="Delete workdir (only) after successful completion.")
-flags.DEFINE_boolean("g3pdb", default=False, help="Run with g3pdb debugging.")
 FLAGS = flags.FLAGS
 
+# Adds jax flags to the program.
+jax.config.parse_flags_with_absl()
+# Fixes design flaw in jax.random that may cause unnecessary device-to-device
+# communications, making some operations faster.
+jax.config.update("jax_threefry_partitionable", True)
 
-def _main(_):  # pylint: disable=missing-function-docstring
+
+def _main(_):
+  """Runs the training loop end-to-end."""
   # ## Trainer section 1: Setup.
 
   config = FLAGS.config
@@ -114,7 +119,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
   mw = metric_writers.MetricWriter(
       xid, wid,
   )
-  chrono = bv_utils.Chrono()
+  chrono = train_utils.Chrono()
 
   # ## Trainer section 2: Datasets initialization.
   write_note("Initializing train dataset...")
@@ -141,10 +146,10 @@ def _main(_):  # pylint: disable=missing-function-docstring
   steps_per_epoch = ntrain_img / batch_size
 
   # Get specific steps (configured as steps, epochs, examples or percent).
-  total_steps = bv_utils.steps("total", config, ntrain_img, batch_size)
+  total_steps = train_utils.steps("total", config, ntrain_img, batch_size)
   def get_steps(name, default=ValueError, cfg=config):
-    return bv_utils.steps(name, cfg, ntrain_img, batch_size, total_steps,
-                          default)
+    return train_utils.steps(name, cfg, ntrain_img, batch_size, total_steps,
+                             default)
   log_training_steps = get_steps("log_training")
   keep_ckpt_steps = get_steps("keep_ckpt", None)
   ckpt_steps = get_steps("ckpt", None)
@@ -174,12 +179,12 @@ def _main(_):  # pylint: disable=missing-function-docstring
   # situations where we allocate them twice.
   @partial(jax.jit, backend="cpu")
   def init(rng):
-    dummy_batch = jax.tree.map(
+    batch = jax.tree.map(
         lambda x: jnp.zeros((local_batch_size,) + x.shape[1:],  # pylint: disable=g-long-lambda
                             x.dtype.as_numpy_dtype), train_ds.element_spec)
-    dummy_inputs = task.model_inputs(dummy_batch)
+    inputs = task.model_inputs(batch)
     variables = model.init(
-        rng, *dummy_inputs,
+        rng, *inputs,
         train=config.get("train_at_init") or config.get("train_always"))
     model_state, params = flax.core.pop(variables, "params")
     params = flax.core.unfreeze(params)
@@ -287,7 +292,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
     ckpt_tree = jax.tree.structure(checkpoint)
     loaded = checkpointing.load_checkpoint(resume_ckpt_path, ckpt_tree)
     # bfloat16 type gets lost when data is saved to disk, so we recover it.
-    checkpoint = jax.tree.map(bv_utils.recover_dtype, loaded)
+    checkpoint = jax.tree.map(checkpointing.recover_dtype, loaded)
     params_cpu, opt_cpu = checkpoint["params"], checkpoint["opt"]
     state_cpu = {k: v for k, v in checkpoint.items() if k in state_cpu}
     chrono.load(checkpoint["chrono"])
@@ -332,7 +337,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
     # Run evaluators.
     saved_metrics = {}
     for (name, evaluator, log_steps, prefix) in evaluators:
-      if (bv_utils.itstime(step, log_steps, total_steps, first=False)
+      if (train_utils.itstime(step, log_steps, total_steps, first=False)
           or stop_training):
         chrono.pause(wait_for=(params_repl, state_repl))
         write_note(f"{name} evaluation...\n{chrono.note}")
@@ -374,20 +379,21 @@ def _main(_):  # pylint: disable=missing-function-docstring
         (params_repl, state_repl, opt_repl, rngs_loop, loss_value, measurements
          ) = update_fn(params_repl, state_repl, opt_repl, rngs_loop,
                        train_batch)
-      train_metrics.append({"training_loss": loss_value, **measurements})
+      if jax.process_index() == 0:
+        train_metrics.append({"training_loss": loss_value, **measurements})
 
       # On the first host, let's always profile a handful of early steps.
       if jax.process_index() == 0 and config.get("xprof", True):
-        prof = bv_utils.startstop_prof(prof, step, first_step,
-                                       log_training_steps)
+        prof = train_utils.startstop_prof(prof, step, first_step,
+                                          log_training_steps)
 
     # Checkpoint saving.
     if (do_train and save_ckpt_path and
-        bv_utils.itstime(step, ckpt_steps, total_steps, host=0,
-                         first=False)):
+        train_utils.itstime(step, ckpt_steps, total_steps, host=0,
+                            first=False)):
       chrono.pause(wait_for=(params_repl, opt_repl, state_repl))
-      bv_utils.checkpointing_timeout(ckpt_writer,
-                                     config.get("ckpt_timeout", 1))
+      train_utils.checkpointing_timeout(ckpt_writer,
+                                        config.get("ckpt_timeout", 1))
       # We need to transfer the weights over now or else we risk keeping them
       # alive while they'll be updated in a future step, creating hard to debug
       # memory errors (see (internal link)). Also, takes device 0's params only.
@@ -396,7 +402,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
                                         (opt_repl, state_repl))
       # Check whether we want to keep a copy of the current checkpoint.
       copy_step = None
-      if bv_utils.itstime(step, keep_ckpt_steps, total_steps):
+      if train_utils.itstime(step, keep_ckpt_steps, total_steps):
         copy_step = step
       checkpoint = {"params": params_cpu, "opt": opt_cpu,
                     "chrono": chrono.save(), **state_cpu}
@@ -405,7 +411,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
       chrono.resume()
     # Report training progress.
     if (do_train and
-        bv_utils.itstime(step, log_training_steps, total_steps, host=0)
+        train_utils.itstime(step, log_training_steps, total_steps, host=0)
         or chrono.warmup and jax.process_index() == 0):
       for i, sched_fn_cpu in enumerate(sched_fns_cpu):
         mw.measure(f"global_schedule{i if i else ''}", sched_fn_cpu(step - 1))
@@ -413,7 +419,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
       for name, value in measurements.items():  # pylint: disable=undefined-variable
         mw.measure(name, value[0])
         stop_training |= early_stopper.should_stop(step, name, value[0])
-      # Report training metrics aggregated betweeen the logging events.
+      # Report training metrics aggregated between the logging events.
       for name, value in inspect.pytree_list_to_dict(train_metrics).items():
         mw.measure(f"{name}_agg", value.mean())
       train_metrics = []
@@ -432,7 +438,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
   # ## Trainer section 8: Post-loop finalize.
   # Always give a chance to stop the profiler, no matter how things ended.
   if jax.process_index() == 0 and prof is not None:
-    bv_utils.startstop_prof(prof)
+    train_utils.startstop_prof(prof)
 
   # Last note needs to happen before the pool is closed.
   if not stop_training:
@@ -448,11 +454,7 @@ def _main(_):  # pylint: disable=missing-function-docstring
 
 
 def main(_):
-  if FLAGS.g3pdb:
-    with g3pdb.catch_post_mortem():
-      _main(_)
-  else:
-    _main(_)
+  _main(_)
 
 
 if __name__ == "__main__":

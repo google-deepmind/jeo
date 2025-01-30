@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,23 +32,30 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from jeo import train_utils
-from jeo.tools import bv_utils
 import optax
 
 
 ################################################################################
 #                            Classification losses                             #
 ################################################################################
+def softmax_xent(*, logits, labels, reduction=True, kl=False, axis=-1):
+  log_p = jax.nn.log_softmax(logits, axis=axis)
+  nll = -jnp.sum(labels * log_p, axis=axis)
+  if kl:
+    nll += jnp.sum(labels * jnp.log(jnp.clip(labels, 1e-8)), axis=axis)
+  return jnp.mean(nll) if reduction else nll
+
+
 def generalized_softmax_xent(
     *,
-    logits,
-    labels,
-    reduction=True,
-    weights=None,
-    label_smoothing=0.0,
-    normalize=True,
-):
-  """Compute generlized (weighted, normalized, smoothed) cross entropy.
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    label_smoothing: float = 0.0,
+    normalize: bool = True,
+) -> jnp.ndarray:
+  """Compute generalized (weighted, normalized, smoothed) cross entropy.
 
   Extended from big_vision.utils.weighted_softmax_xent for per-pixel losses.
 
@@ -84,13 +91,13 @@ def generalized_softmax_xent(
 
 def sigmoid_xent(
     *,
-    logits,
-    labels,
-    reduction=True,
-    weights=None,
-    normalize=True,
-    label_smoothing=0.0,
-):
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    label_smoothing: float = 0.0,
+    normalize: bool = True,
+) -> jnp.ndarray:
   """Computes cross-entropy over binary/multilabel/regression tasks."""
   labels = get_soft_targets(labels, logits, label_smoothing)
   log_p = jax.nn.log_sigmoid(logits)
@@ -116,8 +123,8 @@ def sigmoid_xent(
 
 
 def generalized_dice(
-    logits,
-    labels,
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
     *,
     reduction: bool = True,
     weights: jnp.ndarray | None = None,
@@ -129,7 +136,7 @@ def generalized_dice(
     class_weights: list[float] | None = None,
     activation: str = "softmax",
 ) -> jnp.ndarray:
-  """Compute generlized dice loss.
+  """Compute generalized dice loss.
 
   Args:
    logits: [B, ..., C] float array with per class logits.
@@ -228,16 +235,16 @@ def _generalized_dice_coefficient(
 
 
 def softmax_focal_loss(
-    logits,
-    labels,
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
     *,
-    reduction=True,
-    weights=None,
-    alpha=0.25,
-    gamma=2.0,
-    label_smoothing=0.0,
-    normalize=True,
-):
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    label_smoothing: float = 0.0,
+    normalize: bool = True,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+) -> jnp.ndarray:
   """Computes softmax focal loss for multiclass problems.
 
   Focal loss: https://arxiv.org/pdf/1708.02002.pdf
@@ -251,12 +258,12 @@ def softmax_focal_loss(
     labels: One-hot encoded labels (B, ..., N) or int labels (B, ...).
     reduction: Whether to reduce across samples or return per_example_loss.
     weights: Whether additional weights/masks should be applied.
-    alpha: Focal alpha scaling parameter (non-focal: 1.).
-    gamma: Focal loss focusing paramter (non-focal: 0.).
     label_smoothing: label smoothing constant, used to determine the on and off
       values.
     normalize: normalize each batch item loss by the number of elements (pixels,
       tokens) in it. Otherwise, each pixel/token losses are added together.
+    alpha: Focal alpha scaling parameter (non-focal: 1.).
+    gamma: Focal loss focusing parameter (non-focal: 0.).
 
   Returns:
     Single scalar loss or per_example_loss.
@@ -283,7 +290,7 @@ def softmax_focal_loss(
   return loss.mean() if reduction else loss
 
 
-def onehot(labels, num_classes, on_value=1.0, off_value=0.0):
+def onehot(labels, num_classes, on_value=1.0, off_value=0.0) -> jnp.ndarray:
   x = labels[..., None] == jnp.arange(num_classes)[None]
   x = jax.lax.select(
       x, jnp.full(x.shape, on_value), jnp.full(x.shape, off_value)
@@ -317,7 +324,13 @@ def get_soft_targets(
 ################################################################################
 #                              Regression losses                               #
 ################################################################################
-def l2_loss(logits, labels, *, reduction=True, weights=None, as_mse=True):
+def l2_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    as_mse: bool = True) -> jnp.ndarray:
   """Computes L2 loss."""
   if logits.ndim == labels.ndim + 1:
     logits = jnp.squeeze(logits, -1)
@@ -337,8 +350,14 @@ def l2_loss(logits, labels, *, reduction=True, weights=None, as_mse=True):
 #                             Probabilistic losses                             #
 ################################################################################
 def gnll_loss(
-    logits, labels, log_variances, *, reduction=True, weights=None, eps=1e-8
-):
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    log_variances: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    eps: float = 1e-8,
+) -> jnp.ndarray:
   """Computes Gaussian negative log likelihood loss."""
 
   variances = jnp.exp(log_variances) + eps
@@ -355,8 +374,13 @@ def gnll_loss(
 
 
 def kld_loss(
-    *, logits, labels, reduction=True, gamma: float = 1.0, activation="sigmoid"
-):  # {sigmoid, softmax, none}
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    gamma: float = 1.0,
+    activation: str = "sigmoid",
+) -> jnp.ndarray:  # {sigmoid, softmax, none}
   """Computes Kullback-Leibler divergence (relative entropy) loss."""
   # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence
   # loss = y_true * log(y_true / y_pred)
@@ -402,7 +426,7 @@ def supres_losses(sr, sr_sigma, hr, hr_mask=None, base_cpsnr=None,
     hr: High-res target images. (B,H,W,[C]).
     hr_mask: High-res target mask (0 for corrupted hr pixels). (B,H,W) or None.
     base_cpsnr: Baseline cPSNR. (B,) or None.
-    border: radius to search for best allignement between SR & HR.
+    border: radius to search for best alignement between SR & HR.
     use_l1: Returns L1 loss if True, or L2 otherwise.
     with_sigma: Whether to use sigma in loss computation (only L1 for now).
     brightness_bias: Whether to correct for brightness bias.
@@ -445,6 +469,7 @@ def supres_losses(sr, sr_sigma, hr, hr_mask=None, base_cpsnr=None,
       hr_ij = hr_ij * hr_mask_ij
 
       # Brightness bias correction.
+      b = 0.0
       if brightness_bias:
         b = jnp.sum(hr_ij - sr_ij, axis=nonbatch_axes)/num_pixels_masked
         b = jnp.expand_dims(b, axis=nonbatch_axes)
@@ -482,7 +507,7 @@ def ssim(
     y: jnp.ndarray,  # ([B], H, W, C)
     c1: float = 0.01**2,
     c2: float = 0.03**2) -> jnp.ndarray:  # ([B], H-2, W-2, C)
-  """Computes structual-similarity loss on images x and y.
+  """Computes structural-similarity loss on images x and y.
 
   Based on haiku code in:
   (internal link)/deepmind/research/robots/representations/jax/projects/sfm/losses/photometric.py?l=67
@@ -536,8 +561,8 @@ def compute_normalized_cpsnr(pred_cpsnr, base_cpsnr):
 #                            Self-supervised losses                            #
 ################################################################################
 @jax.default_matmul_precision("float32")
-def nt_xent(logits, reduction=True, temperature: float = 1.,
-            axis_name="batch"):
+def nt_xent(logits: jnp.ndarray, reduction: bool = True, temperature: float = 1,
+            axis_name: str | None = "batch") -> jnp.ndarray:
   """Computes Normalized Temperature-scaled Cross Entropy loss.
 
   It follows tf2 implementation in third_party/py/simclr/objective.py.
@@ -592,8 +617,8 @@ def nt_xent(logits, reduction=True, temperature: float = 1.,
 #                                Loss combiners                                #
 ################################################################################
 def weighted_losses_sum(
-    logits,
-    labels,
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
     *,
     reduction: bool = True,
     weights: jnp.ndarray | None = None,
@@ -636,7 +661,7 @@ def weighted_losses_sum(
 ################################################################################
 CLASSIFICATION_LOSS_FNS = {
     "sigmoid_xent": sigmoid_xent,  # And for regression.
-    "softmax_xent": bv_utils.softmax_xent,
+    "softmax_xent": softmax_xent,
     "generalized_softmax_xent": generalized_softmax_xent,
     "softmax_focal_loss": softmax_focal_loss,
 }
@@ -667,7 +692,7 @@ LOSS_FNS = {
 }
 
 
-def get_loss_fn(loss_name, **kwargs):
+def get_loss_fn(loss_name: str, **kwargs):
   if loss_name in LOSS_FNS:
     loss_fn = LOSS_FNS[loss_name]
   else:  # given some.module.loss_fn_name

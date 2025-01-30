@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import tensorflow as tf
 
 @Registry.register("preprocess_ops.decode")
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_decode(channels=3, precise=False):
+def get_decode(channels: int = 3, precise: bool = False):
   """Decode an encoded image string, see tf.io.decode_image.
 
   Args:
@@ -52,7 +52,9 @@ def get_decode(channels=3, precise=False):
 
 @Registry.register("preprocess_ops.resize", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_resize(size, method="bilinear", antialias=False):
+def get_resize(
+    size: int | Sequence[int], method: str = "bilinear", antialias: bool = False
+):
   """Resizes image to a given size.
 
   Args:
@@ -101,7 +103,9 @@ def _resize_factor(image, factor, method="area", antialias=True):
 
 @Registry.register("preprocess_ops.resize_small", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_resize_small(smaller_size, method="area", antialias=False):
+def get_resize_small(
+    smaller_size: int, method: str = "area", antialias: bool = False
+):
   """Resizes the smaller side to `smaller_size` keeping aspect ratio.
 
   Args:
@@ -129,7 +133,9 @@ def get_resize_small(smaller_size, method="area", antialias=False):
 
 @Registry.register("preprocess_ops.resize_long", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_resize_long(longer_size, method="area", antialias=True):
+def get_resize_long(
+    longer_size: int, method: str = "area", antialias: bool = True
+):
   """Resizes the longer side to `longer_size` keeping aspect ratio.
 
   Args:
@@ -153,8 +159,13 @@ def get_resize_long(longer_size, method="area", antialias=True):
 
 @Registry.register("preprocess_ops.inception_crop", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_inception_crop(size=None, area_min=5, area_max=100,
-                       method="bilinear", antialias=False):
+def get_inception_crop(
+    size: int | None = None,
+    area_min: int = 5,
+    area_max: int = 100,
+    method: str = "bilinear",
+    antialias: bool = False,
+):
   """Makes inception-style image crop.
 
   Inception-style crop is a random image crop (its size and aspect ratio are
@@ -165,7 +176,7 @@ def get_inception_crop(size=None, area_min=5, area_max=100,
     size: Resize image to [size, size] after crop.
     area_min: minimal crop area.
     area_max: maximal crop area.
-    method: rezied method, see tf.image.resize docs for options.
+    method: resize method, see tf.image.resize docs for options.
     antialias: see tf.image.resize. Ideally set to True for all new configs.
 
   Returns:
@@ -219,7 +230,7 @@ def get_random_crop(crop_size: int, num_crops: int = 1):
 
 @Registry.register("preprocess_ops.central_crop", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_central_crop(crop_size=None):
+def get_central_crop(crop_size: int | None = None):
   """Makes central crop of a given size.
 
   Args:
@@ -307,9 +318,15 @@ def get_random_flip_lr():
 @Registry.register("preprocess_ops.decode_jpeg_and_inception_crop",
                    replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_decode_jpeg_and_inception_crop(size=None, area_min=5, area_max=100,
-                                       ratio_min=0.75, ratio_max=1.33,
-                                       method="bilinear", antialias=False):
+def get_decode_jpeg_and_inception_crop(
+    size: int | None = None,
+    area_min: int = 5,
+    area_max: int = 100,
+    ratio_min: float = 0.75,
+    ratio_max: float = 1.33,
+    method: str = "bilinear",
+    antialias: bool = False,
+):
   """Decode jpeg string and make inception-style image crop.
 
   Inception-style crop is a random image crop (its size and aspect ratio are
@@ -324,7 +341,7 @@ def get_decode_jpeg_and_inception_crop(size=None, area_min=5, area_max=100,
     area_max: maximal crop area.
     ratio_min: minimal aspect ratio.
     ratio_max: maximal aspect ratio.
-    method: rezied method, see tf.image.resize docs for options.
+    method: resize method, see tf.image.resize docs for options.
     antialias: see tf.image.resize. Ideally set to True for all new configs.
 
   Returns:
@@ -357,10 +374,10 @@ def get_decode_jpeg_and_inception_crop(size=None, area_min=5, area_max=100,
 
 @Registry.register("preprocess_ops.cutout_mask", replace=True)
 def cutout_mask(
-    min_size_ratio=0.01,
-    max_size_ratio=0.5,
-    inkey="image",
-    outkey="cutout_mask",
+    min_size_ratio: float = 0.01,
+    max_size_ratio: float = 0.5,
+    inkey: str = "image",
+    outkey: str = "cutout_mask",
 ):
   """Creates a mask which can be used to cutout a random region of the image."""
 
@@ -410,7 +427,7 @@ def cutout_mask(
 
 @Registry.register("preprocess_ops.cutout_from_mask", replace=True)
 @pp_utils.InKeyOutKey(with_data=True)
-def get_cutout_from_mask(mask_key="cutout_mask", replace=0):
+def get_cutout_from_mask(mask_key: str = "cutout_mask", replace: int = 0):
   """Cuts out a region of an image according to mask in `cutout_mask`."""
 
   def _cutout_from_mask(image, data):
@@ -430,7 +447,9 @@ def get_cutout_from_mask(mask_key="cutout_mask", replace=0):
 
 @Registry.register("preprocess_ops.random_fill_along_dim", replace=True)
 @pp_utils.InKeyOutKey(with_data=False)
-def get_random_fill_along_dim(*, axis=1, probability=0.25, fill_value=0):
+def get_random_fill_along_dim(
+    *, axis: int = 1, probability: float = 0.25, fill_value: float | int = 0
+):
   """Random masks some channels from a given dimension."""
 
   def _random_fill_along_dim(image):
@@ -472,7 +491,7 @@ def get_random_rotation90():
 
 @Registry.register("preprocess_ops.rand_shift", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_random_shift_reflect(max_shift=4):
+def get_random_shift_reflect(max_shift: int = 4):
   """Randomly shifts given image by specified amount."""
   # By up to w pixels, with reflection at boundary.
 
@@ -485,7 +504,7 @@ def get_random_shift_reflect(max_shift=4):
 
 
 @Registry.register("preprocess_ops.flip_ud_with_label", replace=True)
-def get_flip_ud_with_label(outkey="flipped", key="image"):
+def get_flip_ud_with_label(outkey: str = "flipped", key: str = "image"):
   """Flips image up or down and saves if it was flipped."""
 
   def _pp(features):
@@ -502,12 +521,12 @@ def get_flip_ud_with_label(outkey="flipped", key="image"):
 
 @Registry.register("preprocess_ops.random_resize", replace=True)
 def get_random_resize(
-    ref_size,
-    min_ratio,
-    max_ratio,
-    key="image",
-    method="bicubic",
-    mask_key="padding_mask",
+    ref_size: int,
+    min_ratio: float,
+    max_ratio: float,
+    key: str = "image",
+    method: str = "bicubic",
+    mask_key: str = "padding_mask",
 ):
   """Randomly resizes image preserving aspect ratio."""
 
@@ -546,7 +565,7 @@ def get_random_flip_ud():
 
 @Registry.register("preprocess_ops.clear_boundary", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_clear_boundary(margin, inverse=False):
+def get_clear_boundary(margin: int, inverse: bool = False):
   """Sets a zero value on a boundary of a tensor (of width "margin").
 
   Args:
@@ -579,7 +598,9 @@ def get_clear_boundary(margin, inverse=False):
 @Registry.register("preprocess_ops.vgg_value_range", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
 def get_vgg_value_range(
-    mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), scale=255.0
+    mean: Sequence[float] = (0.485, 0.456, 0.406),
+    std: Sequence[float] = (0.229, 0.224, 0.225),
+    scale: float = 255.0,
 ):
   """VGG-style preprocessing, subtracts mean and divides by stddev.
 
@@ -608,7 +629,7 @@ def get_vgg_value_range(
 @Registry.register("preprocess_ops.tanh_value_range", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
 def get_tanh_value_range(
-    mean: Sequence[float], std: Sequence[float], tanh_scale=1.0
+    mean: Sequence[float], std: Sequence[float], tanh_scale: float = 1.0
 ):
   """Normalizing image pixels by a scaled tanh function.
 

@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,9 +13,10 @@
 # limitations under the License.
 
 """Input pipeline (initially based on BV)."""
+from collections.abc import Callable, Iterator, Sequence
 import functools
 import math
-from typing import Optional, Sequence
+from typing import Any
 
 from absl import logging
 import einops
@@ -33,9 +34,17 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
+FilterFn = Callable[[Any], bool]
+PreprocessFn = Callable[[Any], Any]
 
-def get_num_examples(dataset, split, data_dir=None, dataset_module=None,
-                     **kwargs):
+
+def get_num_examples(
+    dataset: str,
+    split: str,
+    data_dir: str | None = None,
+    dataset_module: str | None = None,
+    **kwargs
+) -> int:
   """Returns number of examples for given split."""
   if dataset_module:
     ds_module = train_utils.import_module(dataset_module, "datasets")
@@ -46,9 +55,11 @@ def get_num_examples(dataset, split, data_dir=None, dataset_module=None,
     return builder.info.splits[split].num_examples
 
 
-def _get_filter_fn(filter_fn):
+def _get_filter_fn(filter_fn: FilterFn | str | None) -> FilterFn | None:
   """Returns filter function."""
-  if filter_fn and isinstance(filter_fn, str):
+  if isinstance(filter_fn, str):
+    if not filter_fn:
+      return None
     pos = filter_fn.find("=")
     assert pos >= 0
     key = filter_fn[:pos]
@@ -63,23 +74,31 @@ def _get_filter_fn(filter_fn):
   return filter_fn
 
 
-def get_data(dataset, split, preprocess_fn, batch_size, data_dir, train, *,
-             cache_raw=False,
-             cache_raw_keys: Sequence[str] = (),
-             # For train==True only:
-             shuffle_buffer_size=None,
-             prefetch=2,
-             filter_fn=None,
-             filter_final_fn=None,
-             num_parallel_calls=100,
-             # For train==False only:
-             cache_final=False,
-             val_steps=None,  # num_batches per eval epoch.
-             # For custom dataset loaders:
-             dataset_module=None,
-             skip_decode: Sequence[str] = ("image",),
-             download_and_prepare: bool = False,
-             **kwargs) -> tuple[tf.data.Dataset, int]:
+def get_data(
+    dataset: str,
+    split: str,
+    preprocess_fn: PreprocessFn | str,
+    batch_size: int,
+    data_dir: int | None,
+    train: bool,
+    *,
+    cache_raw: bool = False,
+    cache_raw_keys: Sequence[str] = (),
+    # For train==True only:
+    shuffle_buffer_size: int | None = None,
+    prefetch: int = 2,
+    filter_fn: FilterFn | str | None = None,
+    filter_final_fn: FilterFn | str | None = None,
+    num_parallel_calls: int = 100,
+    # For train==False only:
+    cache_final: bool = False,
+    val_steps: int | None = None,  # num_batches per eval epoch.
+    # For custom dataset loaders:
+    dataset_module: str | None = None,
+    skip_decode: Sequence[str] = ("image",),
+    download_and_prepare: bool = False,
+    **kwargs
+) -> tuple[tf.data.Dataset, int]:
   """Returns dataset with the number of train examples or evaluation steps.
 
   Args:
@@ -210,11 +229,13 @@ def get_data(dataset, split, preprocess_fn, batch_size, data_dir, train, *,
     return data.prefetch(1), val_steps
 
 
-def start_input_pipeline(data, n_prefetch, shard=True):
+def start_input_pipeline(
+    data: tf.data.Dataset, n_prefetch: int, shard: bool = True
+) -> Iterator[Any]:
   """Return iterator with prefetching and numpy conversion."""
   def to_numpy(x):
     if hasattr(x, "_numpy"):
-       # _numpy() call avoids redundant copy when converting tf.Tensor to numpy.
+      # _numpy() call avoids redundant copy when converting tf.Tensor to numpy.
       return x._numpy()  # pylint: disable=protected-access
     else:
       # Transforms x into read-only numpy array without copy if possible, see:
@@ -233,14 +254,18 @@ def start_input_pipeline(data, n_prefetch, shard=True):
 
 
 @functools.lru_cache(maxsize=None)
-def get_builder(dataset: str, data_dir: Optional[str]):
+def get_builder(dataset: str, data_dir: str | None) -> tfds.core.DatasetBuilder:
   return tfds.builder(dataset, data_dir=data_dir or None, try_gcs=True)
 
 
-def get_dataset_tfds(dataset: str, split: str = "train",
-                     shuffle_files: bool = True, data_dir: Optional[str] = None,
-                     skip_decode: Sequence[str] = ("image",),
-                     download_and_prepare: bool = False):
+def get_dataset_tfds(
+    dataset: str,
+    split: str = "train",
+    shuffle_files: bool = True,
+    data_dir: str | None = None,
+    skip_decode: Sequence[str] = ("image",),
+    download_and_prepare: bool = False,
+) -> tuple[tf.data.Dataset, tfds.core.DatasetBuilder]:
   """Returns TFDS dataset split."""
   builder = get_builder(dataset, data_dir)
   if download_and_prepare:
@@ -263,7 +288,7 @@ def get_dataset_tfds(dataset: str, split: str = "train",
 
 
 # Forked from third_party/py/big_vision/input_pipeline.py
-def _get_pad_data(data):
+def _get_pad_data(data: tf.data.Dataset) -> tf.data.Dataset:
   def zeros_like_spec(spec):
     # For unknown/flexible dimensions (None), just use 0 instead.
     return tf.zeros([x or 0 for x in spec.shape], spec.dtype)
@@ -273,7 +298,7 @@ def _get_pad_data(data):
 
 
 # Forked from third_party/py/big_vision/input_pipeline.py
-def _add_internal_fields(pp_fn):
+def _add_internal_fields(pp_fn: PreprocessFn) -> PreprocessFn:
   """Wraps pp_fn to add _mask and _id keys."""
   # Adds internal keys, that we either, in this order of preference:
   # 1. keep from result of pp_fn,
@@ -291,7 +316,7 @@ def _add_internal_fields(pp_fn):
 
 
 # Forked from third_party/py/big_vision/input_pipeline.py
-def _add_tpu_host_options(data):
+def _add_tpu_host_options(data: tf.data.Dataset) -> tf.data.Dataset:
   options = tf.data.Options()
   options.threading.private_threadpool_size = 48
   options.threading.max_intra_op_parallelism = 1

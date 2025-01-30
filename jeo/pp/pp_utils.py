@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,21 +14,22 @@
 
 """Preprocessing utils (not preprocessing ops)."""
 
+from collections.abc import Sequence
 import functools
 import os
-from typing import Any, Sequence, Union
+from typing import Any
 
 from jeo.tools import geeflow_utils
 import tensorflow as tf
 
 
-def maybe_repeat(arg, n_reps):
+def maybe_repeat(arg: Sequence[Any] | Any, n_reps: int) -> Sequence[Any]:
   if not isinstance(arg, Sequence) or isinstance(arg, str):
     arg = (arg,) * n_reps
   return arg
 
 
-def get_lookup_table(label_map: Union[dict[Any, Any], Sequence[Any]],
+def get_lookup_table(label_map: dict[Any, Any] | Sequence[Any],  # pytype: disable=annotation-type-mismatch
                      default_value: Any = -1,
                      key_dtype: bool = None) -> tf.lookup.StaticHashTable:
   """Converts list of string labels or dict to a lookup hashtable."""
@@ -51,9 +52,15 @@ def get_lookup_table(label_map: Union[dict[Any, Any], Sequence[Any]],
 
 
 @functools.cache
-def load_normalization_ranges(path, split_name="train", postfix=None,
-                              center="bins_median", scale="bins_mad_std",
-                              as_tf=True, data_dir=None):
+def load_normalization_ranges(
+    path: str,
+    split_name: str = "train",
+    postfix: str | None = None,
+    center: str = "bins_median",
+    scale: str = "bins_mad_std",
+    as_tf: bool = True,
+    data_dir: str | None = None,
+) -> tuple[list[float], list[float]]:
   """Returns center and scale parameters for normalization."""
   if data_dir:  # Using new locations.
     path = os.path.join(data_dir, path.replace(":", "/"), "stats")
@@ -88,7 +95,8 @@ class InKeyOutKey(object):
       as an additional input.
   """
 
-  def __init__(self, indefault=None, outdefault=None, with_data=False):
+  def __init__(self, indefault: str | None = None,
+               outdefault: str | None = None, with_data: bool = False):
     self.indefault = indefault
     self.outdefault = outdefault
     self.with_data = with_data

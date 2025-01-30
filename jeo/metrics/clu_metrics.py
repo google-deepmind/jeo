@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,9 @@
 # limitations under the License.
 
 """Metrics (currently heavily based on Hubways CLU metrics)."""
+from collections.abc import Callable
 import dataclasses
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any
 
 from clu import metrics as clu_metrics_builder
 import flax
@@ -27,7 +28,7 @@ import scipy.stats
 import sklearn.metrics
 
 Collection = clu_metrics_builder.Collection
-DataDict = Dict[str, Union[np.ndarray, jnp.ndarray]]
+DataDict = dict[str, np.ndarray | jnp.ndarray]
 SingleFn = Callable[[jnp.ndarray, DataDict, DataDict, DataDict],
                     Collection]
 GatherFn = Callable[[jnp.ndarray, DataDict, DataDict, DataDict, str],
@@ -48,6 +49,18 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
 
   Computes true_positives, true_negatives, false_positives and false_negatives
   for a given set of thresholds for multilabel classification task.
+
+  If exclude_background_class is True, then the first background class should
+  be ignored in metric computation. However, when for
+  a valid class the background class is predicted, it should still count as
+  error (false negative) - though, the model should have been trained for this
+  not to occur.
+
+  Used dimension annotation abbreviations:
+    B: batch size
+    M: number of elements (batch size or batch size * number of pixels)
+    N: number of classes
+    T: number of threshold values
   """
 
   # shape: (thresholds, num_classes)
@@ -61,47 +74,67 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
   def from_model_output(
       cls,
       labels: jnp.ndarray,
-      predictions: jnp.ndarray,
-      label_weights: Optional[jnp.ndarray] = None,
-      mask: Optional[jnp.ndarray] = None,
+      predictions: jnp.ndarray,  # Expected to be probabilities (0-1).
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
+      exclude_background_class: bool = False,
       **_,
   ) -> clu_metrics_builder.Metric:
     # Handling the non-multilabel case.
-    if labels.ndim == 1:
+    if labels.ndim == predictions.ndim - 1:
       labels = onehot(labels, num_classes=predictions.shape[-1])
     if mask is None:
-      mask = jnp.ones(labels.shape[0])
-    if mask.ndim != 1:
-      raise ValueError(f"Expected mask.ndim={mask.ndim} equal to 1")
+      mask = jnp.ones(labels.shape[:-1])
+    if mask.ndim < labels.ndim - 1:
+      mask = jnp.expand_dims(mask, list(range(mask.ndim, labels.ndim - 1)))
+      mask = jnp.broadcast_to(mask, labels.shape[:-1])
+    if mask.ndim != labels.ndim - 1:
+      raise ValueError(f"Expected mask.ndim={mask.ndim} equal to labals.ndim-1")
     if label_weights is None:
       label_weights = jnp.ones(labels.shape)
-    if label_weights.ndim == 1:
-      label_weights = jnp.broadcast_to(label_weights[:, None], labels.shape)
-
+    if label_weights.ndim == predictions.ndim - 1:
+      label_weights = jnp.broadcast_to(label_weights[..., None], labels.shape)
+    if labels.ndim != predictions.ndim or labels.ndim != label_weights.ndim:
+      raise ValueError(
+          f"Expected equal shapes for labels={labels.shape}, "
+          f"predictions={predictions.shape}, and "
+          f"label_weights={label_weights.shape}")
+    if mask.shape != labels.shape[:-1]:
+      raise ValueError(f"Shape for mask={mask.shape} != {labels.shape[:-1]}")
+    if labels.ndim != 2:  # Adjust for per-pixel and temporal tasks.
+      labels = labels.reshape(-1, labels.shape[-1])  # (M, N)
+      predictions = predictions.reshape(-1, predictions.shape[-1])  # (M, N)
+      label_weights = label_weights.reshape(-1, label_weights.shape[-1])
+      mask = mask.reshape(-1)  # (M,)
     if labels.ndim != 2 or predictions.ndim != 2 or label_weights.ndim != 2:
       raise ValueError(
           f"Expected labels.ndim={labels.ndim} equal to 2; "
           f"predictions.ndim={predictions.ndim} equal to 2; "
           f"label_weights.ndim={label_weights.ndim} equal to 2"
       )
-    masked_label_weigthts = label_weights * mask[..., None]
-
-    masked_label_weigthts = masked_label_weigthts[None, ...]
+    masked_label_weigthts = label_weights * mask[..., None]  # (M, 1)
+    masked_label_weigthts = masked_label_weigthts[None, ...]  # (1, M, 1)
 
     pred_is_pos = jnp.greater(
         predictions, _default_threshold()[..., None, None]
-    )
+    )  # (T, M, N)
     pred_is_neg = jnp.logical_not(pred_is_pos)
-    label_is_pos = jnp.equal(labels, 1)
-    label_is_neg = jnp.equal(labels, 0)
+    label_is_pos = jnp.equal(labels, 1)  # (M, N)
+    label_is_neg = jnp.equal(labels, 0)  # (M, N)
 
-    tp = pred_is_pos * label_is_pos * masked_label_weigthts
+    tp = pred_is_pos * label_is_pos * masked_label_weigthts  # (T, M, N)
     tn = pred_is_neg * label_is_neg * masked_label_weigthts
     fp = pred_is_pos * label_is_neg * masked_label_weigthts
     fn = pred_is_neg * label_is_pos * masked_label_weigthts
 
+    if exclude_background_class:
+      tp = tp[..., 1:]
+      tn = tn[..., 1:]
+      fp = fp[..., 1:]
+      fn = fn[..., 1:]
+
     return cls(
-        true_positives=tp.sum(axis=1),
+        true_positives=tp.sum(axis=1),  # (T, N) or (T, N-1)
         true_negatives=tn.sum(axis=1),
         false_positives=fp.sum(axis=1),
         false_negatives=fn.sum(axis=1),
@@ -208,7 +241,7 @@ def recall_at_precision_function(precision_point: float) -> Any:
 
 
 def recall_at_precision_function_expensive(precision_point: float):
-  """Computes recall at a given precision point in a more accuracte way.
+  """Computes recall at a given precision point in a more accurate way.
 
   Args:
     precision_point: A scalar value in range `[0, 1]`.
@@ -241,6 +274,60 @@ def recall_at_precision_function_expensive(precision_point: float):
 
 
 @flax.struct.dataclass
+class Precision(ConfusionMatrixMultilabel):
+  """Computes precision metrics at threshold=0.5 microaveraged."""
+
+  def compute(self) -> jnp.ndarray:
+    index = np.where(self.thresholds >= 0.5)[0][0]
+    tp = self.true_positives.sum(axis=-1)[index]
+    fp = self.false_positives.sum(axis=-1)[index]
+    return divide_no_nan(tp, tp + fp)
+
+
+@flax.struct.dataclass
+class Recall(ConfusionMatrixMultilabel):
+  """Computes recall metrics at threshold=0.5 microaveraged."""
+
+  def compute(self) -> jnp.ndarray:
+    index = np.where(self.thresholds >= 0.5)[0][0]
+    tp = self.true_positives.sum(axis=-1)[index]
+    fn = self.false_negatives.sum(axis=-1)[index]
+    return divide_no_nan(tp, tp + fn)
+
+
+@flax.struct.dataclass
+class MatthewsCorrelation(ConfusionMatrixMultilabel):
+  """Computes mathews correlation."""
+
+  def compute(self) -> jnp.ndarray:
+    if self.true_positives.shape[1] > 2:
+      raise NotImplementedError(
+          "MatthewsCorrelation currently supports only binary classification."
+      )
+    index = np.where(self.thresholds >= 0.5)[0][0]
+    tp = self.true_positives[index, 0]
+    tn = self.true_negatives[index, 0]
+    fp = self.false_positives[index, 0]
+    fn = self.false_negatives[index, 0]
+    return divide_no_nan(
+        tp * tn - fp * fn,
+        jnp.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)),
+    )
+
+
+@flax.struct.dataclass
+class F1(ConfusionMatrixMultilabel):
+  """Computes F1 at 0.5 metric microaveraged."""
+
+  def compute(self) -> jnp.ndarray:
+    index = np.where(self.thresholds >= 0.5)[0][0]
+    tp = self.true_positives.sum(axis=-1)[index]
+    fp = self.false_positives.sum(axis=-1)[index]
+    fn = self.false_negatives.sum(axis=-1)[index]
+    return divide_no_nan(2 * tp, 2 * tp + fp + fn)
+
+
+@flax.struct.dataclass
 class ConfusionMatrix(clu_metrics_builder.Metric):
   """Computes confusion matrix for multiclass classification/segmentation tasks.
 
@@ -250,7 +337,7 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
   segmentation is (B,H,W,N).
 
   If exclude_background_class is True, then downstream metrics can select to
-  ignore the firest background class in metric computation. However, when for
+  ignore the first background class in metric computation. However, when for
   a valid class the background class is predicted, it should still count as
   error (false negative).
 
@@ -276,8 +363,8 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
       cls,
       labels: jnp.ndarray,  # (B,...) or (B,...,N)
       logits: jnp.ndarray,  # (B,...,N)
-      label_weights: Optional[jnp.ndarray] = None,  # (B,...)
-      mask: Optional[jnp.ndarray] = None,  # (B,)
+      label_weights: jnp.ndarray | None = None,  # (B,...)
+      mask: jnp.ndarray | None = None,  # (B,)
       exclude_background_class: bool = False,
       **_,
   ) -> clu_metrics_builder.Metric:
@@ -388,28 +475,6 @@ class RecallMacro(ConfusionMatrix):
 
 
 @flax.struct.dataclass
-class Precision(ConfusionMatrixMultilabel):
-  """Computes precision metrics at threshold=0.5 microaveraged."""
-
-  def compute(self) -> jnp.ndarray:
-    index = np.where(self.thresholds >= 0.5)[0][0]
-    tp = self.true_positives.sum(axis=-1)[index]
-    fp = self.false_positives.sum(axis=-1)[index]
-    return divide_no_nan(tp, tp + fp)
-
-
-@flax.struct.dataclass
-class Recall(ConfusionMatrixMultilabel):
-  """Computes recall metrics at threshold=0.5 microaveraged."""
-
-  def compute(self) -> jnp.ndarray:
-    index = np.where(self.thresholds >= 0.5)[0][0]
-    tp = self.true_positives.sum(axis=-1)[index]
-    fn = self.false_negatives.sum(axis=-1)[index]
-    return divide_no_nan(tp, tp + fn)
-
-
-@flax.struct.dataclass
 class Accuracy(clu_metrics_builder.Average):
   """Computes the accuracy from model outputs `logits` and `labels`."""
 
@@ -419,8 +484,8 @@ class Accuracy(clu_metrics_builder.Average):
       *,
       logits: jnp.ndarray,
       labels: jnp.ndarray,
-      label_weights: Optional[jnp.ndarray] = None,
-      mask: Optional[jnp.ndarray] = None,
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
       **kwargs,
   ) -> clu_metrics_builder.Metric:
     if logits.ndim == labels.ndim:
@@ -459,8 +524,8 @@ class Bias(clu_metrics_builder.Average):
       *,
       logits: jnp.ndarray,
       labels: jnp.ndarray,
-      label_weights: Optional[jnp.ndarray] = None,
-      mask: Optional[jnp.ndarray] = None,
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
       **kwargs,
   ) -> clu_metrics_builder.Metric:
     assert logits.ndim == labels.ndim
@@ -494,8 +559,8 @@ class MSE(clu_metrics_builder.Average):
       *,
       logits: jnp.ndarray,
       labels: jnp.ndarray,
-      label_weights: Optional[jnp.ndarray] = None,
-      mask: Optional[jnp.ndarray] = None,
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
       **kwargs,
   ) -> clu_metrics_builder.Metric:
     logits = jnp.squeeze(logits)
@@ -528,6 +593,64 @@ class RMSE(MSE):
 
 
 @flax.struct.dataclass
+class UMAD(clu_metrics_builder.Average):
+  """Unweighted mean absolute difference of `logits` and `labels`."""
+
+  @classmethod
+  def from_model_output(
+      cls, *, logits: jnp.ndarray, labels: jnp.ndarray, **kwargs
+  ) -> clu_metrics_builder.Metric:
+    logits = jnp.squeeze(logits)
+    labels = jnp.squeeze(labels)
+    if logits.ndim != labels.ndim:
+      raise ValueError(
+          f"Expected logits.ndim={logits.ndim}==labels.ndim={labels.ndim}"
+      )
+    return super().from_model_output(values=jnp.abs(logits - labels), **kwargs)
+
+
+@flax.struct.dataclass
+class ECE(clu_metrics_builder.Average):
+  """Computes the Expected Calibration Error.
+
+  Based on
+  https://lars76.github.io/2020/08/07/metrics-for-uncertainty-estimation.html#4
+  """
+
+  @classmethod
+  def from_model_output(
+      cls,
+      *,
+      logits: jnp.ndarray,
+      labels: jnp.ndarray,
+      mask: jnp.ndarray | None = None,
+      label_weights: jnp.ndarray | None = None,  # (B,...)
+      num_bins: int = 15,
+      **kwargs,
+  ) -> clu_metrics_builder.Metric:
+    if logits.ndim == labels.ndim:
+      labels = labels.argmax(axis=-1)
+    if mask is None:
+      mask = jnp.ones_like(labels)
+    if label_weights is not None:
+      mask = label_weights * jnp.expand_dims(
+          mask, list(range(mask.ndim, label_weights.ndim))
+      )
+    prob = jax.nn.softmax(logits, axis=-1)
+    pred = jnp.argmax(prob, axis=-1)
+    prob_pred = jnp.max(prob, -1)
+    correct = (pred == labels).astype(jnp.float32)
+    bins = jnp.digitize(prob_pred, bins=jnp.linspace(0, 1, num_bins))
+    ece = 0
+    # Apply mask/weights.
+    diff = mask * (correct - prob_pred)
+    for bin_i in range(num_bins):
+      ece += jnp.abs(jnp.where(bins == bin_i, diff, 0).sum())
+
+    return super().from_model_output(values=ece/sum(labels.shape), **kwargs)
+
+
+@flax.struct.dataclass
 class ROCAUC(
     clu_metrics_builder.CollectingMetric.from_outputs(("targets", "probs"))
 ):
@@ -538,8 +661,8 @@ class ROCAUC(
       cls,
       logits: jnp.ndarray,  # (B,...,N)
       labels: jnp.ndarray,  # (B,...)
-      label_weights: Optional[jnp.ndarray] = None,  # (B,...)
-      mask: Optional[jnp.ndarray] = None,  # (B,)
+      label_weights: jnp.ndarray | None = None,  # (B,...)
+      mask: jnp.ndarray | None = None,  # (B,)
       # Extra static configuration parameters.
       sample_proportion: float = 1.,
       false_label_ind: int = 0,
@@ -598,8 +721,8 @@ class ExamplePearsonCorr(
       cls,
       logits: jnp.ndarray,  # (B,...,N)
       labels: jnp.ndarray,  # (B,...)
-      label_weights: Optional[jnp.ndarray] = None,  # (B,...)
-      mask: Optional[jnp.ndarray] = None,  # (B,)
+      label_weights: jnp.ndarray | None = None,  # (B,...)
+      mask: jnp.ndarray | None = None,  # (B,)
       # Extra static configuration parameters.
       false_label_ind: int = 0,
       true_label_ind: int = 1,
@@ -644,117 +767,6 @@ class ExamplePearsonCorr(
 
 
 @flax.struct.dataclass
-class ECE(clu_metrics_builder.Average):
-  """Computes the Expected Calibration Error.
-
-  Based on
-  https://lars76.github.io/2020/08/07/metrics-for-uncertainty-estimation.html#4
-  """
-
-  @classmethod
-  def from_model_output(
-      cls,
-      *,
-      logits: jnp.ndarray,
-      labels: jnp.ndarray,
-      mask: Optional[jnp.ndarray] = None,
-      label_weights: Optional[jnp.ndarray] = None,  # (B,...)
-      num_bins: int = 15,
-      **kwargs,
-  ) -> clu_metrics_builder.Metric:
-    if logits.ndim == labels.ndim:
-      labels = labels.argmax(axis=-1)
-    if mask is None:
-      mask = jnp.ones_like(labels)
-    if label_weights is not None:
-      mask = label_weights * jnp.expand_dims(
-          mask, list(range(mask.ndim, label_weights.ndim))
-      )
-    prob = jax.nn.softmax(logits, axis=-1)
-    pred = jnp.argmax(prob, axis=-1)
-    prob_pred = jnp.max(prob, -1)
-    correct = (pred == labels).astype(jnp.float32)
-    bins = jnp.digitize(prob_pred, bins=jnp.linspace(0, 1, num_bins))
-    ece = 0
-    # Apply mask/weights.
-    diff = mask * (correct - prob_pred)
-    for bin_i in range(num_bins):
-      ece += jnp.abs(jnp.where(bins == bin_i, diff, 0).sum())
-
-    return super().from_model_output(values=ece/sum(labels.shape), **kwargs)
-
-
-@flax.struct.dataclass
-class Minimum(clu_metrics_builder.Metric):
-  """Computes the min of a given quantity."""
-
-  metric: jnp.ndarray
-
-  def merge(self, other: "Minimum") -> "Minimum":
-    return type(self)(
-        metric=jnp.min(jnp.array([self.metric, other.metric]))
-    )
-
-  def compute(self):
-    return self.metric
-
-
-@flax.struct.dataclass
-class Maximum(clu_metrics_builder.Metric):
-  """Computes the max of a given quantity."""
-
-  metric: jnp.ndarray
-
-  def merge(self, other: "Maximum") -> "Maximum":
-    return type(self)(
-        metric=jnp.max(jnp.array([self.metric, other.metric]))
-    )
-
-  def compute(self):
-    return self.metric
-
-
-@flax.struct.dataclass
-class MinLogvar(Minimum):
-  """Computes the min from model outputs log_variances."""
-
-  @classmethod
-  def from_model_output(
-      cls,
-      log_variances: jnp.ndarray,
-      label_weights: Optional[jnp.ndarray] = None,
-      **kwargs,
-  ) -> clu_metrics_builder.Metric:
-    if label_weights is None:
-      valid_log_vars = log_variances
-    else:
-      assert label_weights.shape == log_variances.shape
-      # Note that we are masking and not weighting the log_vars!
-      valid_log_vars = jnp.where(label_weights > 0, log_variances, np.inf)
-    return cls(metric=jnp.min(valid_log_vars))
-
-
-@flax.struct.dataclass
-class MaxLogvar(Maximum):
-  """Computes the max from model outputs log_variances."""
-
-  @classmethod
-  def from_model_output(
-      cls,
-      log_variances: jnp.ndarray,
-      label_weights: Optional[jnp.ndarray] = None,
-      **kwargs,
-  ) -> clu_metrics_builder.Metric:
-    if label_weights is None:
-      valid_log_vars = log_variances
-    else:
-      assert label_weights.shape == log_variances.shape
-      # Note that we are masking and not weighting the log_vars!
-      valid_log_vars = jnp.where(label_weights > 0, log_variances, -np.inf)
-    return cls(metric=jnp.max(valid_log_vars))
-
-
-@flax.struct.dataclass
 class ExpensiveAUCPR(
     clu_metrics_builder.CollectingMetric.from_outputs(
         ("labels", "predictions", "label_weights")
@@ -775,7 +787,7 @@ class ExpensiveAUCPR(
       predictions: jnp.ndarray,
       labels: jnp.ndarray,
       label_weights: jnp.ndarray,
-      mask: Optional[jnp.ndarray] = None,
+      mask: jnp.ndarray | None = None,
       **_,
   ) -> "ExpensiveAUCPR":
     if mask is None:
@@ -798,50 +810,6 @@ class ExpensiveAUCPR(
 
 
 @flax.struct.dataclass
-class MaskCount(clu_metrics_builder.Metric):
-  """Calculates how many examples are not masked out.
-
-  Returns:
-    clu_metrics_builder.Metric class representing MaskCount.
-  """
-
-  count: jnp.ndarray
-
-  @classmethod
-  def from_model_output(
-      cls, logits: jnp.ndarray, mask: Optional[jnp.ndarray] = None, **_
-  ) -> clu_metrics_builder.Metric:
-    if mask is None:
-      return cls(count=jnp.array(logits.shape[0]))
-
-    return cls(count=mask.sum())
-
-  def merge(self, other: "MaskCount") -> "MaskCount":
-    _assert_same_shape(self.count, other.count)
-    return type(self)(count=self.count + other.count)
-
-  def compute(self) -> Any:
-    return self.count
-
-
-@flax.struct.dataclass
-class UMAD(clu_metrics_builder.Average):
-  """Unweighted mean absolute difference of `logits` and `labels`."""
-
-  @classmethod
-  def from_model_output(
-      cls, *, logits: jnp.ndarray, labels: jnp.ndarray, **kwargs
-  ) -> clu_metrics_builder.Metric:
-    logits = jnp.squeeze(logits)
-    labels = jnp.squeeze(labels)
-    if logits.ndim != labels.ndim:
-      raise ValueError(
-          f"Expected logits.ndim={logits.ndim}==labels.ndim={labels.ndim}"
-      )
-    return super().from_model_output(values=jnp.abs(logits - labels), **kwargs)
-
-
-@flax.struct.dataclass
 class SpearmanCorrelation(
     clu_metrics_builder.CollectingMetric.from_outputs(
         ("logits", "labels", "mask")
@@ -854,7 +822,7 @@ class SpearmanCorrelation(
       cls,
       logits: jnp.ndarray,
       labels: jnp.ndarray,
-      mask: Optional[jnp.ndarray] = None,
+      mask: jnp.ndarray | None = None,
       **kwargs,
   ) -> "SpearmanCorrelation":
     if mask is None:
@@ -909,35 +877,100 @@ class PearsonCorrelation(
 
 
 @flax.struct.dataclass
-class MatthewsCorrelation(ConfusionMatrixMultilabel):
-  """Computes mathews correlation."""
+class Minimum(clu_metrics_builder.Metric):
+  """Computes the min of a given quantity."""
 
-  def compute(self) -> jnp.ndarray:
-    if self.true_positives.shape[1] > 2:
-      raise NotImplementedError(
-          "MatthewsCorrelation currently supports only inary classification."
-      )
-    index = np.where(self.thresholds >= 0.5)[0][0]
-    tp = self.true_positives[index, 0]
-    tn = self.true_negatives[index, 0]
-    fp = self.false_positives[index, 0]
-    fn = self.false_negatives[index, 0]
-    return divide_no_nan(
-        tp * tn - fp * fn,
-        jnp.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)),
+  metric: jnp.ndarray
+
+  def merge(self, other: "Minimum") -> "Minimum":
+    return type(self)(
+        metric=jnp.min(jnp.array([self.metric, other.metric]))
     )
+
+  def compute(self):
+    return self.metric
 
 
 @flax.struct.dataclass
-class F1(ConfusionMatrixMultilabel):
-  """Computes F1 at 0.5 metric microaveraged."""
+class Maximum(clu_metrics_builder.Metric):
+  """Computes the max of a given quantity."""
 
-  def compute(self) -> jnp.ndarray:
-    index = np.where(self.thresholds >= 0.5)[0][0]
-    tp = self.true_positives.sum(axis=-1)[index]
-    fp = self.false_positives.sum(axis=-1)[index]
-    fn = self.false_negatives.sum(axis=-1)[index]
-    return divide_no_nan(2 * tp, 2 * tp + fp + fn)
+  metric: jnp.ndarray
+
+  def merge(self, other: "Maximum") -> "Maximum":
+    return type(self)(
+        metric=jnp.max(jnp.array([self.metric, other.metric]))
+    )
+
+  def compute(self):
+    return self.metric
+
+
+@flax.struct.dataclass
+class MinLogvar(Minimum):
+  """Computes the min from model outputs log_variances."""
+
+  @classmethod
+  def from_model_output(
+      cls,
+      log_variances: jnp.ndarray,
+      label_weights: jnp.ndarray | None = None,
+      **kwargs,
+  ) -> clu_metrics_builder.Metric:
+    if label_weights is None:
+      valid_log_vars = log_variances
+    else:
+      assert label_weights.shape == log_variances.shape
+      # Note that we are masking and not weighting the log_vars!
+      valid_log_vars = jnp.where(label_weights > 0, log_variances, np.inf)
+    return cls(metric=jnp.min(valid_log_vars))
+
+
+@flax.struct.dataclass
+class MaxLogvar(Maximum):
+  """Computes the max from model outputs log_variances."""
+
+  @classmethod
+  def from_model_output(
+      cls,
+      log_variances: jnp.ndarray,
+      label_weights: jnp.ndarray | None = None,
+      **kwargs,
+  ) -> clu_metrics_builder.Metric:
+    if label_weights is None:
+      valid_log_vars = log_variances
+    else:
+      assert label_weights.shape == log_variances.shape
+      # Note that we are masking and not weighting the log_vars!
+      valid_log_vars = jnp.where(label_weights > 0, log_variances, -np.inf)
+    return cls(metric=jnp.max(valid_log_vars))
+
+
+@flax.struct.dataclass
+class MaskCount(clu_metrics_builder.Metric):
+  """Calculates how many examples are not masked out.
+
+  Returns:
+    clu_metrics_builder.Metric class representing MaskCount.
+  """
+
+  count: jnp.ndarray
+
+  @classmethod
+  def from_model_output(
+      cls, logits: jnp.ndarray, mask: jnp.ndarray | None = None, **_
+  ) -> clu_metrics_builder.Metric:
+    if mask is None:
+      return cls(count=jnp.array(logits.shape[0]))
+
+    return cls(count=mask.sum())
+
+  def merge(self, other: "MaskCount") -> "MaskCount":
+    _assert_same_shape(self.count, other.count)
+    return type(self)(count=self.count + other.count)
+
+  def compute(self) -> Any:
+    return self.count
 
 
 # Copied from

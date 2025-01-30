@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,21 +13,23 @@
 # limitations under the License.
 
 """Mixup augmentation for per-pixel segmentation."""
+from collections.abc import Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 
 
 def get_mixup(
-    rng,
-    batch,
-    images_key="image",
-    labels_key="labels",
-    mix_type="cut-mix",
-    valid_masks_key=None,
-    p=1.0,
-    num_iter=1
-):
+    rng: jax.Array,
+    batch: dict[str, Any],
+    images_key: str = "image",
+    labels_key: str = "labels",
+    mix_type: str = "cut-mix",
+    valid_masks_key: str | None = None,
+    p: float = 1.0,
+    num_iter: int = 1,
+) -> tuple[jax.Array, dict[str, Any]]:
   """Perform mixup augmentation for per-pixel segmentation.
 
   Args:
@@ -66,7 +68,14 @@ def get_mixup(
     raise ValueError(f"Unknown mix_type: {mix_type}")
 
 
-def _cutmix(rng, batch, images_keys, labels_key, valid_masks_key, p):
+def _cutmix(
+    rng: jax.Array,
+    batch: dict[str, Any],
+    images_keys: Sequence[str],
+    labels_key: str,
+    valid_masks_key: str | None,
+    p: float,
+) -> tuple[jax.Array, dict[str, Any]]:
   """Perform Cut-Mix augmentation for per-pixel segmentation.
 
   Test colab for minimal usage and simple visualization:
@@ -87,6 +96,8 @@ def _cutmix(rng, batch, images_keys, labels_key, valid_masks_key, p):
     batch: A batch of data after mixup augmentation.
   """
   labels = batch[labels_key]
+  if labels.ndim == 3:  # [B, H, W]
+    labels = jnp.expand_dims(labels, axis=3)
   batch_size, height, width, _ = labels.shape  # [B, H, W, C]
   # Get labels permutations.
   idx = jax.random.permutation(rng, batch_size)
@@ -138,8 +149,17 @@ def _cutmix(rng, batch, images_keys, labels_key, valid_masks_key, p):
   return rng, batch
 
 
-def _compose_two_images(images, images_b, valid_masks_b, box_rng, height, width,
-                        cut_h, cut_w, masks):
+def _compose_two_images(
+    images: jnp.ndarray,
+    images_b: jnp.ndarray,
+    valid_masks_b: jnp.ndarray,
+    box_rng: jax.Array,
+    height: int,
+    width: int,
+    cut_h: jax.Array,
+    cut_w: jax.Array,
+    masks: jnp.ndarray | None,
+):
   """Inserting the second minibatch into the first at the target locations."""
 
   def _single_compose_two_images(image, image_b, valid_mask_b, mask):
@@ -166,7 +186,14 @@ def _compose_two_images(images, images_b, valid_masks_b, box_rng, height, width,
                                               masks)
 
 
-def _random_box(rng, height, width, cut_h, cut_w, valid_mask):
+def _random_box(
+    rng: jax.Array,
+    height: int,
+    width: int,
+    cut_h: jax.Array,
+    cut_w: jax.Array,
+    valid_mask: jnp.ndarray,
+) -> jnp.ndarray:
   """Sample a random box of shape [cut_h, cut_w]."""
   # Randomly select a center from valid pixels.
   center_hws = jnp.argwhere(valid_mask == 1, size=height*width)
@@ -182,7 +209,9 @@ def _random_box(rng, height, width, cut_h, cut_w, valid_mask):
   return jnp.array([bby1, bbx1, h, w])
 
 
-def _window_mask(destination_box, size):
+def _window_mask(
+    destination_box: jax.Array, size: Sequence[int]
+) -> jnp.ndarray:
   """Mask a part of the image."""
   bby1, bbx1, h, w = destination_box
   h_range = jnp.reshape(jnp.arange(size[0]), [size[0], 1, 1])

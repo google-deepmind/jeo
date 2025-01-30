@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,24 +14,40 @@
 
 """Evaluators builder."""
 import abc
+from typing import Any, Callable, Sequence
 
 from absl import logging
 import jax
 from jeo import input_pipeline
 from jeo import train_utils
+from jeo.metrics import clu_metrics_builder as jeo_metrics
 from jeo.pp import pp_builder
+import ml_collections
+
+ConfigDict = ml_collections.ConfigDict
 
 
 class EvaluatorBase(abc.ABC):
   """Evaluator interface."""
 
   @abc.abstractmethod
-  def __init__(self, predict_fn, batch_size, **kwargs):
-    """Sets up the evaluator in dependence of configuration."""
+  def __init__(self, predict_fn, batch_size, metrics, **data_config):
+    """Initializes the evaluator."""
+
+  @abc.abstractmethod
+  def _get_eval_fn(self, predict_fn):
+    """Produces eval function, also applies pmap."""
 
   @abc.abstractmethod
   def run(self, params):
     """Runs across evaluation data and computes all metrics."""
+
+  def _setup_metrics_and_eval_iter(
+      self, metrics: Sequence[str], predict_fn: Callable[..., Any]
+  ):
+    self.metrics = jeo_metrics.MetricsCollection(metrics)
+    self.metrics_fn = self.metrics.get_gather_fn()
+    self.eval_fn = self._get_eval_fn(predict_fn)
 
   def _setup_dataset(self, batch_size, **data_config):
     """Constructs dataset and sets steps and iter attributes."""
@@ -62,8 +78,13 @@ class EvaluatorBase(abc.ABC):
         ds, data_config.get("prefetch_to_device", 1))
 
 
-def from_config(config, predict_fn, write_note=lambda s: s, get_steps=None,
-                workdir=None):
+def from_config(
+    config: ConfigDict,
+    predict_fn: Callable[[Any], Any],
+    write_note: Callable[[str], None] = lambda s: s,
+    get_steps: Callable[[str, int, ConfigDict], int] | None = None,
+    workdir: str | None = None,
+) -> list[tuple[str, Any, int, str]]:
   """Creates a list of evaluators based on `config`."""
   evaluators = []
   specs = config.get("evals", {})
@@ -99,12 +120,6 @@ def from_config(config, predict_fn, write_note=lambda s: s, get_steps=None,
       cfg["steps"] = cfg.get("steps", config.get("val_steps", None))
     # Pass skip_decode arg to all evaluators.
     cfg["skip_decode"] = config.get("skip_decode", ("image",))
-    if isinstance(lumascope := cfg.get("lumascope"), dict):
-      if workdir is None:  # Uses a random directory with short ttl.
-        lumascope["path"] = None
-      else:
-        path = lumascope.get("path", "{workdir}/lumascope")
-        lumascope["path"] = path.replace("{workdir}", workdir)
 
     module_cls = train_utils.import_module(module, "evaluators")
     if not callable(module_cls):

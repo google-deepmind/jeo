@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,8 @@
 # limitations under the License.
 
 """Positional embeddings."""
-from typing import Any, Optional
+from collections.abc import Sequence
+from typing import Any
 
 import flax.linen as nn
 import jax
@@ -21,7 +22,14 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def get_posemb(module, kind, pos_dims, width, name="posemb", dtype=jnp.float32):
+def get_posemb(
+    module: nn.Module,
+    kind: str,
+    pos_dims: Sequence[int],
+    width: int,
+    name: str = "posemb",
+    dtype: Any = jnp.float32,
+) -> jnp.ndarray:
   """Returns positional embeddings based on specified kind."""
   # Rename `kind` for backwards compatibility with old-style naming.
   # Remove dim marker - it is automatically extracted from pos_dims.
@@ -42,7 +50,9 @@ def get_posemb(module, kind, pos_dims, width, name="posemb", dtype=jnp.float32):
     raise ValueError(f"Unknown posemb type: {kind}")
 
 
-def sinusoidal_init(max_len=512, min_scale=1.0, max_scale=10000.0):
+def sinusoidal_init(
+    max_len: int = 512, min_scale: float = 1.0, max_scale: float = 10000.0
+):
   """1D Sinusoidal Position Embedding Initializer.
 
   Args:
@@ -69,7 +79,9 @@ def sinusoidal_init(max_len=512, min_scale=1.0, max_scale=10000.0):
   return init
 
 
-def posemb_sincos_1d(d, width, temperature=10_000., dtype=jnp.float32):
+def posemb_sincos_1d(
+    d: int, width: int, temperature: float = 10_000.0, dtype: Any = jnp.float32
+) -> jnp.ndarray:
   """Returns 1-dim sincos positional embeddings."""
   x = jnp.mgrid[:d]
   assert width % 2 == 0, "Width must be mult of 2 for sincos posemb"
@@ -80,7 +92,13 @@ def posemb_sincos_1d(d, width, temperature=10_000., dtype=jnp.float32):
   return jnp.asarray(pe, dtype)[None, :, :]
 
 
-def posemb_sincos_2d(h, w, width, temperature=10_000., dtype=jnp.float32):
+def posemb_sincos_2d(
+    h: int,
+    w: int,
+    width: int,
+    temperature: float = 10_000.0,
+    dtype: Any = jnp.float32,
+) -> jnp.ndarray:
   """Follows the MoCo v3 logic (from BV ViT)."""
   y, x = jnp.mgrid[:h, :w]
   assert width % 4 == 0, "Width must be mult of 4 for sincos posemb"
@@ -92,7 +110,14 @@ def posemb_sincos_2d(h, w, width, temperature=10_000., dtype=jnp.float32):
   return jnp.asarray(pe, dtype)[None, :, :]
 
 
-def posemb_sincos_3d(t, h, w, width, temperature=10_000., dtype=jnp.float32):
+def posemb_sincos_3d(
+    t: int,
+    h: int,
+    w: int,
+    width: int,
+    temperature: float = 10_000.0,
+    dtype: Any = jnp.float32,
+) -> jnp.ndarray:
   """Follows the MoCo v3 logic."""
   assert width % 6 == 0, "Width must be mult of 6 for sincos posemb"
   z, y, x = jnp.mgrid[:t, :h, :w]
@@ -106,7 +131,7 @@ def posemb_sincos_3d(t, h, w, width, temperature=10_000., dtype=jnp.float32):
   return jnp.asarray(pe, dtype)[None, :, :]  # (1, len, emb_dim)
 
 
-def sine2d_init(max_len=196, max_scale=10000.0):
+def sine2d_init(max_len: int = 196, max_scale: float = 10000.0):
   """2D Sinusoidal Position Embedding Initializer.
 
   Args:
@@ -136,7 +161,7 @@ class AddPositionEmbs(nn.Module):
     max_len: maximal sequence length. Optional, uses targets sequence length if
       not specified.
   """
-  max_len: Optional[int] = None
+  max_len: int | None = None
   decode: bool = False
   # Higher level default was None, alternatively, here it has been
   # nn.initializers.normal(stddev=0.02)  # from BERT.
@@ -144,7 +169,9 @@ class AddPositionEmbs(nn.Module):
   type: str = "fixed"  # {fixed, learned, ...}
 
   @nn.compact
-  def __call__(self, inputs, deterministic=True):
+  def __call__(
+      self, inputs: jnp.ndarray, deterministic: bool = True
+  ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Applies AddPositionEmbs module.
 
     By default this layer uses a fixed sinusoidal embedding table. If a
@@ -157,6 +184,7 @@ class AddPositionEmbs(nn.Module):
 
     Returns:
       output: inputs modulated by pos-embeddings [batch_size, seq_len, emb_dim].
+      pe: positional embeddings [batch_size, seq_len, emb_dim].
     """
     assert inputs.ndim == 3, f"Unexpected inputs shape: {inputs.shape}"
     choices = self.type.split("-")

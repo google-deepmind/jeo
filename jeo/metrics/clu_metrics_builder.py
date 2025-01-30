@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """Metrics (currently heavily based on Hubways CLU metrics)."""
+from collections.abc import Callable, Sequence
 import functools
-from typing import Callable, Dict, Sequence, Tuple, Type, Union
 
 from absl import logging
 from clu import metrics as clu_metrics_builder
@@ -24,7 +24,7 @@ from jeo.metrics import clu_metrics
 import numpy as np
 
 Collection = clu_metrics_builder.Collection
-DataDict = Dict[str, Union[np.ndarray, jnp.ndarray]]
+DataDict = dict[str, np.ndarray | jnp.ndarray]
 SingleFn = Callable[[jnp.ndarray, DataDict, DataDict, DataDict],
                     Collection]
 GatherFn = Callable[[jnp.ndarray, DataDict, DataDict, DataDict, str],
@@ -65,15 +65,15 @@ class MetricsCollection:
     else:
       self._state = self._state.merge(metrics_update)
 
-  def result(self) -> Dict[str, jnp.ndarray]:
+  def result(self) -> dict[str, jnp.ndarray]:
     """Returns dict of computed metric values."""
     if self._state is None:
       raise ValueError("No metrics updates received yet.")
     return self._state.compute()
 
 
-def get_metrics_cls(metrics_list: Sequence[Union[str, Tuple[str, str]]],
-                    class_name: str = "Metrics") -> Type[Collection]:
+def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
+                    class_name: str = "Metrics") -> type[Collection]:
   """Returns Jax-serializable metrics collection class.
 
   Based on CLU metrics module ((internal link)).
@@ -96,6 +96,7 @@ def get_metrics_cls(metrics_list: Sequence[Union[str, Tuple[str, str]]],
     # Unfortunately, special characters cannot be inside of metrics names.
     name = name.replace(".", "_").replace("@", "_at_")
 
+    # TODO: Change to match..case syntax.
     if reg_name == "loss":
       metrics_dict[name] = clu_metrics_builder.Average.from_output("loss")
     elif reg_name in ["accuracy", "acc"]:
@@ -169,14 +170,12 @@ def get_metrics_cls(metrics_list: Sequence[Union[str, Tuple[str, str]]],
       logging.warning("Metric `%s` not specified. Assuming Average based "
                       "metric.", name)
       metrics_dict[name] = clu_metrics_builder.Average.from_output(name)
-      # raise ValueError(f"Not supported metric type: {reg_name}")
-
   return create_metrics_collection_cls(class_name, metrics_dict)
 
 
 def create_metrics_collection_cls(
-    class_name: str, metrics_dict: Dict[str, clu_metrics_builder.Metric]
-) -> Type[Collection]:
+    class_name: str, metrics_dict: dict[str, clu_metrics_builder.Metric]
+) -> type[Collection]:
   """Creates new metrics collection class."""
   cls = type(class_name, (Collection,), {"__annotations__": metrics_dict})
   cls = flax.struct.dataclass(cls)  # To enable Jax tree serialization.
@@ -222,7 +221,7 @@ def _get_metrics_inputs(
 
 
 def get_single_update(
-    metrics_cls: Type[Collection],
+    metrics_cls: type[Collection],
     loss: jnp.ndarray,
     outputs: DataDict,
     inputs: DataDict,
@@ -236,7 +235,7 @@ def get_single_update(
 
 
 def get_gathered_update(
-    metrics_cls: Type[Collection],
+    metrics_cls: type[Collection],
     loss: jnp.ndarray,
     outputs: DataDict,
     inputs: DataDict,

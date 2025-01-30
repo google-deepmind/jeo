@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,15 +14,13 @@
 
 r"""Config for quick testing on Cifar10.
 """
-from big_vision.configs import common as bvcc
-from jeo.configs import config_utils
 import ml_collections
-import numpy as np
 
 
 def get_config(arg=None):
   """Returns config."""
-  arg = bvcc.parse_arg(arg, runlocal=False, colab=False, test=False, bs=4096)
+  run_test = arg is not None and "test" in arg
+  runlocal = arg is not None and "runlocal" in arg and not run_test
   config = ml_collections.ConfigDict()
   config.task_type = "classification"
 
@@ -42,7 +40,7 @@ def get_config(arg=None):
 
   # General training.
   config.seed = 0
-  config.batch_size = arg.bs
+  config.batch_size = 4096
   config.total_epochs = 200
   config.log_training_steps = 50
   config.log_eval_steps = 200
@@ -62,12 +60,12 @@ def get_config(arg=None):
   config.grad_clip_norm = 1.0
   config.wd = (1e-4 / 256) * config.batch_size
   config.lr = (0.1 / 256) * config.batch_size
-  # config.schedule = dict(decay_type="cosine", warmup_epochs=5)
   config.schedule = dict(decay_type="cosine",
                          warmup_steps=50_000 // config.batch_size * 5)
 
   # Eval.
-  config.evals = {"val": ml_collections.config_dict.create(
+  config.evals = ml_collections.ConfigDict()
+  config.evals.val = ml_collections.config_dict.create(
       type="classification",
       dataset=config.dataset,
       dataset_dir=config.get("dataset_dir"),
@@ -77,14 +75,13 @@ def get_config(arg=None):
       pp=pp_eval,
       loss_name=config.loss,
       metrics=("acc", "f1", "aucpr", "prec", "recall", "loss"),
-      cache_final=True)}
+      cache_final=True)
 
-  if arg.runlocal:
+  if runlocal:
     config.batch_size = 2
     config.total_epochs = None
     config.total_steps = 2
     config.schedule.warmup_steps = 1
-    # config.schedule.warmup_epochs = None
     config.shuffle_buffer_size = None
     config.log_training_steps = 1
     config.log_eval_steps = 2
@@ -97,12 +94,11 @@ def get_config(arg=None):
     config.xprof = False
     del config.ckpt_steps
 
-  if arg.test:
+  if run_test:
     config.batch_size = 2
     config.total_epochs = None
     config.total_steps = 2
     config.schedule.warmup_steps = 1
-    # config.schedule.warmup_epochs = None
     config.shuffle_buffer_size = None
     config.log_training_steps = 1
     config.log_eval_steps = 2

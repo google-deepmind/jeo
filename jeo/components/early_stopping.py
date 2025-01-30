@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,9 +14,9 @@
 
 """Early stopping."""
 import dataclasses
-from typing import Optional
 
 from absl import logging
+import ml_collections
 import numpy as np
 
 
@@ -57,11 +57,11 @@ class EarlyStopping:
   monitor: str
   min_delta: float = 0.0
   mode: str = "auto"  # {auto, max, min}
-  patience_steps: Optional[int] = None
-  patience_epochs: Optional[int] = None
-  start_from_step: Optional[int] = None
-  start_from_epoch: Optional[int] = None
-  steps_per_epoch: Optional[int] = None
+  patience_steps: int | None = None
+  patience_epochs: int | None = None
+  start_from_step: int | None = None
+  start_from_epoch: int | None = None
+  steps_per_epoch: int | None = None
 
   def __post_init__(self):
     # Initial validity checks and setup.
@@ -104,13 +104,15 @@ class EarlyStopping:
 
 
 class NoStopping:
-  """Dummy class to simplify wiring logic."""
+  """Fake class to simplify wiring logic."""
 
   def should_stop(self, *_, **__) -> bool:
     return False
 
 
-def from_config(config, steps_per_epoch):
+def from_config(
+    config: ml_collections.ConfigDict, steps_per_epoch: int | None
+) -> EarlyStopping | NoStopping:
   """Creates an early stopping monitor."""
   if "early_stopping" in config:
     return EarlyStopping(

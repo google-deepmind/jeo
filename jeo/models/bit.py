@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,11 +19,11 @@ to support addaptive num_groups in GroupNorm.
 """
 from typing import Optional, Sequence, Union
 
-from big_vision.models import common
 import flax
 import flax.linen as nn
 import jax.numpy as jnp
-from jeo import checkpointing
+from jeo.tools import checkpointing
+from jeo.tools import tree_utils
 import numpy as np
 
 
@@ -170,6 +170,6 @@ def load(init_params, init_file, model_cfg, dont_load=()):
   """Load init from checkpoint."""
   del model_cfg  # Unused
   params = checkpointing.load_params(init_file)
-  params = common.merge_params(params, init_params, dont_load)
+  params = tree_utils.merge_params(params, init_params, dont_load)
   params = fix_old_checkpoints(params)
   return params

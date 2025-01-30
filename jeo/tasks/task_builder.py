@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,9 @@
 
 """Task builder."""
 import abc
+from collections.abc import Callable, Sequence
 import functools
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any
 
 from absl import logging
 import flax.linen as nn
@@ -26,9 +27,9 @@ from jeo.losses import losses
 
 ArrayDict = dict[str, jnp.ndarray]
 Mapping = dict[str, Any]
-FloatOrArr = Union[float, jnp.ndarray]
-PredictFn = Callable[[Mapping, Mapping], Union[tuple[Any], Mapping]]
-ArrayTupleOrDict = tuple[Union[ArrayDict, jnp.ndarray], ...]
+FloatOrArr = float | jnp.ndarray
+PredictFn = Callable[[Mapping, Mapping], tuple[Any] | Mapping]
+ArrayTupleOrDict = tuple[ArrayDict | jnp.ndarray, ...]
 
 
 class TaskBase(abc.ABC):
@@ -37,7 +38,7 @@ class TaskBase(abc.ABC):
   def __init__(
       self,
       loss_name: str = "sigmoid_xent",
-      loss_kw: Optional[dict[str, Any]] = None,
+      loss_kw: dict[str, Any] | None = None,
       modalities: Sequence[str] | str = ("image",),
       input_as_dict: bool = False,
   ):

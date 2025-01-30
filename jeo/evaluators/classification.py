@@ -1,4 +1,4 @@
-# Copyright 2024 The jeo Authors.
+# Copyright 2024 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import jax
 import jax.numpy as jnp
 from jeo import losses
 from jeo.evaluators import builder as eval_builder
-from jeo.metrics import metrics as jeo_metrics
 
 
 DEFAULT_METRICS = ("acc", "f1", "aucpr", "prec", "recall", "loss")
@@ -33,11 +32,9 @@ class Evaluator(eval_builder.EvaluatorBase):
                multilabel=False, metrics=DEFAULT_METRICS, subsplit=None,
                subsplit_key="subsplit", multihead=False, loss_kw=None,
                **data_config):
-    self._setup_dataset(batch_size, **data_config)
-    self.metrics = jeo_metrics.MetricsCollection(metrics)
-    self.metrics_fn = self.metrics.get_gather_fn()
+    self._setup_metrics_and_eval_iter(metrics, predict_fn)
+    self.data_config = {"batch_size": batch_size, **data_config}
     self.loss_fn = losses.get_loss_fn(loss_name, **(loss_kw or {}))
-    self.eval_fn = self._get_eval_fn(predict_fn)
     self.logits_to_pred_fn = jax.nn.sigmoid if multilabel else jax.nn.softmax
     self.subsplit = subsplit
     self.multihead = multihead
@@ -81,6 +78,9 @@ class Evaluator(eval_builder.EvaluatorBase):
 
   def run(self, params):
     """Computes all metrics."""
+    if not hasattr(self, "data_iter"):
+      self._setup_dataset(**self.data_config)
+
     self.metrics.reset_states()
     for _, batch in zip(range(self.steps), self.data_iter):
       update = self.eval_fn(params, batch)
