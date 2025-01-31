@@ -1,5 +1,9 @@
 # Jeo - Jax Geo lib
 
+<div style="text-align: left">
+<img align="right" src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_1.png" width="100" alt="jeo logo"></img>
+</div>
+
 *Model training and inference for geospatial remote sensing and Earth
 Observation in JAX.*
 
@@ -13,24 +17,43 @@ be supported as well. The code base supports running on CPUs, GPUs, or
 
 The purposes of open-sourcing this codebase include publishing the code of
 research projects developed in it and to enable easier collaborations in the
-geospatial and sustainability space on model development.
+geospatial and sustainability space on model development. Jeo coordinates well
+with the [GeeFlow](https://github.com/google-deepmind/geeflow) library to
+construct large-scale geospatial datasets using
+[Google Earth Engine](https://earthengine.google.com/) (GEE). An example
+workflow is outlined below:
 
-# Projects and publications
+<div align="center">
+<img src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_geeflow_processing.png" width="900" alt="jeo geeflow processing"></img>
+</div>
+
+## Projects and publications
+
 Projects and publications that used this codebase:
 
-- Light-weight geospatial model for global deforestation attribution
-(link to paper TBD), by *Anton Raichuk, Michelle Sims, Radost Stanimirova, and
-Maxim Neumann*. Presented at the [NeurIPS 2024 Workshop on Tackling Climate
-Change with Machine Learning](https://www.climatechange.ai/events/neurips2024)
-in Vancouver, BC, Canada. Dec 2024.
-- [Planted: a dataset for planted forest identification from multi-satellite
-time series](https://arxiv.org/abs/2406.18554), by *Luis Miguel Pazos-Outón,
-Cristina Nader Vasconcelos, Anton Raichuk, Anurag Arnab, Dan Morris, and Maxim
-Neumann*. Presented at [IGARSS 2024](https://www.2024.ieeeigarss.org/)
-in Athens, Greece. Jul 2024.
+-   Light-weight geospatial model for global deforestation attribution, by
+    *Anton Raichuk, Michelle Sims, Radost Stanimirova, and Maxim Neumann*.
+    Presented at the
+    [NeurIPS 2024 Workshop on Tackling Climate Change with Machine Learning](https://www.climatechange.ai/events/neurips2024)
+    in Vancouver, BC, Canada. Dec 2024.
+-   [Planted: a dataset for planted forest identification from multi-satellite
+    time series](https://arxiv.org/abs/2406.18554), by *Luis Miguel Pazos-Outón,
+    Cristina Nader Vasconcelos, Anton Raichuk, Anurag Arnab, Dan Morris, and
+    Maxim Neumann*. Presented at [IGARSS 2024](https://www.2024.ieeeigarss.org/)
+    in Athens, Greece. Jul 2024.
+-   Global drivers of forest loss at 1 km resolution, by *Michelle Sims, Radost
+    Stanimirova, Anton Raichuk, Maxim Neumann, Jessica Richter, Forrest Follett,
+    James MacCarthy, Kristine Lister, Christopher Randle, Lindsey Sloat, Elena
+    Esipova, Jaelah Jupiter, Charlotte Stanton, Dan Morris, Christy Slay, Drew
+    Purves, and Nancy Harris*, 2025.
+-   ForestCast: Forecasting deforestation risk at scale with deep learning, by
+    *Matt Overlan, Charlotte Stanton, Maxim Neumann, Michelangelo Conserva,
+    Yuchang Jiang, Arianna Manzini, Julia Haas, Mélanie Rey, Keith Anderson, and
+    Drew Purves*, 2025.
 
-# Getting started
-## Installation
+## Getting started
+
+### Installation
 
 The first step is to checkout JEO and install relevant python dependencies in a
 virtual environment:
@@ -46,7 +69,7 @@ source .venv/bin/activate
 pip install -e ..
 ```
 
-## Local demo run
+### Local demo run
 
 Launching a quick local model training for just a few steps on the CPU:
 
@@ -60,13 +83,13 @@ neureal net (CNN) model based on ResNet, see `jeo/models/bit.py`) on
 [CIFAR-10](https://www.tensorflow.org/datasets/catalog/cifar10) TFDS dataset.
 Since we run this on a local CPU just as a demo, we appended the `:runlocal`
 config arg above, which specifies within the config to run just for a few
-training and evaluation steps. For more configuration details, see the config file
-`jeo/configs/tests/tiny_bit.py`.
+training and evaluation steps. For more configuration details, see the config
+file `jeo/configs/tests/tiny_bit.py`.
 
-In a standard workflow, the given `workdir` will be used to save checkpoints
-and potentially other artifacts, such as final evaluation metrics.
+In a standard workflow, the given `workdir` will be used to save checkpoints and
+potentially other artifacts, such as final evaluation metrics.
 
-# Citing JEO
+## Citing JEO
 
 To cite this repository:
 
