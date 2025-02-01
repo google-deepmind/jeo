@@ -1,7 +1,7 @@
 # Jeo - Jax Geo lib
 
 <div style="text-align: left">
-<img align="right" src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_1.png" width="100" alt="jeo logo"></img>
+<img align="right" src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_1.png" width="100" alt="jeo logo">
 </div>
 
 *Model training and inference for geospatial remote sensing and Earth
@@ -12,7 +12,7 @@ The model training is based on [JAX](https://github.com/google/jax) and
 utilize [tf.data](https://www.tensorflow.org/guide/data). The recommended
 datasets are based on [TensorFlow Datasets](https://www.tensorflow.org/datasets)
 for scalable and reproducible input pipelines, while other dataset loaders can
-be supported as well. The code base supports running on CPUs, GPUs, or
+be supported as well. The codebase supports running on CPUs, GPUs, or
 [Google Cloud TPU VMs](https://cloud.google.com/blog/products/compute/introducing-cloud-tpu-vms).
 
 The purposes of open-sourcing this codebase include publishing the code of
@@ -24,7 +24,7 @@ construct large-scale geospatial datasets using
 workflow is outlined below:
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_geeflow_processing.png" width="900" alt="jeo geeflow processing"></img>
+<img src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_geeflow_processing.png" width="900">
 </div>
 
 ## Projects and publications
@@ -93,14 +93,14 @@ potentially other artifacts, such as final evaluation metrics.
 
 To cite this repository:
 
-```bibtex
-@software{jeo2024:github,
-  author = {JEO Team},
+```
+@software{jeo2025:github,
+  author = {Maxim Neumann and Anton Raichuk and Michelangelo Conserva and
+  Luis Miguel Pazos-Outón and Keith Anderson and Matt Overlan and Mélanie Rey},
   title = {{JEO}: Model training and inference for geospatial remote sensing and
   {E}arth {O}bservation in {JAX}}.
   url = {https://github.com/google-deepmind/jeo},
-  version = {0.0.1},
-  year = {2024}
+  year = {2025}
 }
 ```
 
