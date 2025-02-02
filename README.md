@@ -7,21 +7,22 @@
 *Model training and inference for geospatial remote sensing and Earth
 Observation in JAX.*
 
-The model training is based on [JAX](https://github.com/google/jax) and
-[Flax](https://github.com/google/flax) libraries, while the data pipelines
-utilize [tf.data](https://www.tensorflow.org/guide/data). The recommended
-datasets are based on [TensorFlow Datasets](https://www.tensorflow.org/datasets)
-for scalable and reproducible input pipelines, while other dataset loaders can
-be supported as well. The codebase supports running on CPUs, GPUs, or
+Jeo provides a framework for training machine learning models for geospatial
+remote sensing and Earth Observation using [JAX](https://github.com/google/jax)
+and [Flax](https://github.com/google/flax). It leverages
+[tf.data](https://www.tensorflow.org/guide/data) for efficient data pipelines,
+with a focus on [TensorFlow Datasets](https://www.tensorflow.org/datasets) for
+scalable and reproducible input. While TensorFlow Datasets are preferred, other
+dataset loaders are also supported. The codebase is designed to run seamlessly
+on CPUs, GPUs, or
 [Google Cloud TPU VMs](https://cloud.google.com/blog/products/compute/introducing-cloud-tpu-vms).
 
-The purposes of open-sourcing this codebase include publishing the code of
-research projects developed in it and to enable easier collaborations in the
-geospatial and sustainability space on model development. Jeo coordinates well
+This project is open-sourced to share research code and facilitate collaboration
+in geospatial and sustainability model development. Jeo integrates effectively
 with the [GeeFlow](https://github.com/google-deepmind/geeflow) library to
 construct large-scale geospatial datasets using
 [Google Earth Engine](https://earthengine.google.com/) (GEE). An example
-workflow is outlined below:
+workflow is outlined below.
 
 <div align="center">
 <img src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_geeflow_processing.png" width="900">
@@ -96,7 +97,8 @@ To cite this repository:
 ```
 @software{jeo2025:github,
   author = {Maxim Neumann and Anton Raichuk and Michelangelo Conserva and
-  Luis Miguel Pazos-Outón and Keith Anderson and Matt Overlan and Mélanie Rey},
+  Luis Miguel Pazos-Outón and Keith Anderson and Matt Overlan and Mélanie Rey
+  and Yuchang Jiang and Petra Poklukar and Cristina Nader Vasconcelos},
   title = {{JEO}: Model training and inference for geospatial remote sensing and
   {E}arth {O}bservation in {JAX}}.
   url = {https://github.com/google-deepmind/jeo},
