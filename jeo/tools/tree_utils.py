@@ -19,9 +19,9 @@ https://github.com/google-research/big_vision/blob/main/big_vision/utils.py
 """
 
 import collections
+from collections.abc import Mapping
 import dataclasses
 import re
-from typing import Mapping
 
 from absl import logging
 import flax

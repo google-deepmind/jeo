@@ -13,8 +13,10 @@
 # limitations under the License.
 
 """Evaluators builder."""
+
 import abc
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from absl import logging
 import jax

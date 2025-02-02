@@ -15,13 +15,14 @@
 """Trainer utils."""
 
 import collections
+from collections.abc import Callable, Mapping, Sequence
 import contextlib
 import importlib
 import inspect
 import multiprocessing
 import os
 import time
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from absl import logging
 import jax

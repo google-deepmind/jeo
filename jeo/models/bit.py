@@ -17,7 +17,7 @@
 Forked from http://github.com/google-research/big_vision/tree/HEAD/big_vision/models/bit.py
 to support addaptive num_groups in GroupNorm.
 """
-from typing import Optional, Sequence, Union
+from collections.abc import Sequence
 
 import flax
 import flax.linen as nn
@@ -50,7 +50,7 @@ def group_norm(x, **kwargs):
 
 class ResidualUnit(nn.Module):
   """Bottleneck ResNet block."""
-  nmid: Optional[int] = None
+  nmid: int | None = None
   strides: Sequence[int] = (1, 1)
 
   @nn.compact
@@ -81,7 +81,7 @@ class ResNetStage(nn.Module):
   """One stage of ResNet."""
   block_size: int
   first_stride: Sequence[int] = (1, 1)
-  nmid: Optional[int] = None
+  nmid: int | None = None
 
   @nn.compact
   def __call__(self, x):
@@ -95,7 +95,7 @@ class Model(nn.Module):
   """ResNetV1."""
   num_classes: int
   width: float = 1
-  depth: Union[int, Sequence[int]] = 50
+  depth: int | Sequence[int] = 50
   stem_conv_kernel: Sequence[int] = (7, 7)
   stem_conv_stride: Sequence[int] = (2, 2)
   stem_pool_kernel: Sequence[int] = (3, 3)
