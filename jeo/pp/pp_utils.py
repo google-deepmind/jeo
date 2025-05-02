@@ -56,12 +56,15 @@ def load_normalization_ranges(
     path: str,
     split_name: str = "train",
     postfix: str | None = None,
-    center: str = "bins_median",
-    scale: str = "bins_mad_std",
+    center: str | None = "bins_median",
+    scale: str | None = "bins_mad_std",
     as_tf: bool = True,
     data_dir: str | None = None,
-) -> tuple[list[float], list[float]]:
+) -> tuple[list[float] | None, list[float] | None]:
   """Returns center and scale parameters for normalization."""
+  assert bool(center) == bool(scale)
+  if center is None or center.lower() == "none":
+    return None, None
   if data_dir:  # Using new locations.
     path = os.path.join(data_dir, path.replace(":", "/"), "stats")
   stats = geeflow_utils.load_json(path, split_name, postfix, as_cd=False)

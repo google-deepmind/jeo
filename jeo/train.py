@@ -47,6 +47,17 @@ config_flags.DEFINE_config_file(
 flags.DEFINE_string("workdir", default=None, help="Work unit directory.")
 flags.DEFINE_boolean("cleanup", default=False,
                      help="Delete workdir (only) after successful completion.")
+flags.DEFINE_string(
+    "file_group",
+    default=None,
+    help="Permission group to use for file storage, e.g. checkpointing.",
+)
+flags.DEFINE_string(
+    "data_service_address", None, "The address of the tf.data service "
+    "(currently only for training)."
+)
+
+
 FLAGS = flags.FLAGS
 
 # Adds jax flags to the program.
@@ -127,6 +138,7 @@ def _main(_):
       train=True,
       dataset=config.get("dataset"),
       split=config.get("train_split", "train"),
+      dataset_weights=config.get("dataset_weights", None),
       data_dir=fillin(config.get("dataset_dir")),
       dataset_module=config.get("dataset_module"),
       **config.get("dataset_kwargs", {}),
@@ -139,7 +151,9 @@ def _main(_):
       cache_raw=config.get("cache_raw", False),
       skip_decode=config.get("skip_decode", ("image",)),
       download_and_prepare=config.get("download_and_prepare", False),
-      )
+      wid=wid,
+      data_service_address=FLAGS.data_service_address,
+  )
   # Start prefetching already.
   train_iter = input_pipeline.start_input_pipeline(
       train_ds, config.get("prefetch_to_device", 1))
@@ -202,12 +216,23 @@ def _main(_):
     eval_rng_names |= {"dropout", "mask", "masking"}
   init_rng_names = {"params"} | eval_rng_names
   train_rng_names = init_rng_names | {"dropout", "mask", "masking"}
+  # IMPORTANT: To make sure that the order of rngs is deterministic we convert
+  # them to lists and sort them. For example operation "|" on dicts is not
+  # not deterministic on different hosts.
+  init_rng_names = sorted(list(init_rng_names))
+  eval_rng_names = sorted(list(eval_rng_names))
+  train_rng_names = sorted(list(train_rng_names))
   # Keeping eval RNGs constant across all evals to avoid fluctuations.
   eval_rngs = None if not eval_rng_names else dict(zip(
       eval_rng_names, jax.random.split(rng, len(eval_rng_names))))
   rng, *rng_init = jax.random.split(rng, 1 + len(init_rng_names))
   rng_init = dict(zip(init_rng_names, rng_init))
+  jax.experimental.multihost_utils.assert_equal(eval_rngs, "non deterministic")
+  jax.experimental.multihost_utils.assert_equal(rng_init, "non deterministic")
+
   params_cpu, state_cpu = init(rng_init)
+  jax.experimental.multihost_utils.assert_equal(state_cpu, "non deterministic")
+  jax.experimental.multihost_utils.assert_equal(params_cpu, "non deterministic")
 
   if jax.process_index() == 0:
     num_params = sum(p.size for p in jax.tree.leaves(params_cpu))
@@ -406,8 +431,10 @@ def _main(_):
         copy_step = step
       checkpoint = {"params": params_cpu, "opt": opt_cpu,
                     "chrono": chrono.save(), **state_cpu}
-      ckpt_writer = pool.apply_async(checkpointing.save_checkpoint,
-                                     (checkpoint, save_ckpt_path, copy_step))
+      ckpt_writer = pool.apply_async(
+          checkpointing.save_checkpoint,
+          (checkpoint, save_ckpt_path, copy_step, FLAGS.file_group),
+      )
       chrono.resume()
     # Report training progress.
     if (do_train and

@@ -46,7 +46,8 @@ Projects and publications that used this codebase:
     Stanimirova, Anton Raichuk, Maxim Neumann, Jessica Richter, Forrest Follett,
     James MacCarthy, Kristine Lister, Christopher Randle, Lindsey Sloat, Elena
     Esipova, Jaelah Jupiter, Charlotte Stanton, Dan Morris, Christy Slay, Drew
-    Purves, and Nancy Harris*, 2025.
+    Purves, and Nancy Harris*, Environmental Research Letters (ERL) (in print),
+    2025 ([EarthArxiv](https://eartharxiv.org/repository/view/8284/)).
 -   ForestCast: Forecasting deforestation risk at scale with deep learning, by
     *Matt Overlan, Charlotte Stanton, Maxim Neumann, Michelangelo Conserva,
     Yuchang Jiang, Arianna Manzini, Julia Haas, Mélanie Rey, Keith Anderson, and
@@ -100,7 +101,7 @@ To cite this repository:
   Luis Miguel Pazos-Outón and Keith Anderson and Matt Overlan and Mélanie Rey
   and Yuchang Jiang and Petra Poklukar and Cristina Nader Vasconcelos},
   title = {{JEO}: Model training and inference for geospatial remote sensing and
-  {E}arth {O}bservation in {JAX}}.
+  {E}arth {O}bservation in {JAX}},
   url = {https://github.com/google-deepmind/jeo},
   year = {2025}
 }

@@ -14,13 +14,17 @@
 
 r"""Config for quick testing on Cifar10.
 """
+from jeo.configs import config_utils
 import ml_collections
+
+
+def get_arg(arg):
+  return config_utils.parse_arg(arg, runlocal=False, test=False)
 
 
 def get_config(arg=None):
   """Returns config."""
-  run_test = arg is not None and "test" in arg
-  runlocal = arg is not None and "runlocal" in arg and not run_test
+  arg = get_arg(arg)
   config = ml_collections.ConfigDict()
   config.task_type = "classification"
 
@@ -77,7 +81,7 @@ def get_config(arg=None):
       metrics=("acc", "f1", "aucpr", "prec", "recall", "loss"),
       cache_final=True)
 
-  if runlocal:
+  if arg.runlocal:
     config.batch_size = 2
     config.total_epochs = None
     config.total_steps = 2
@@ -88,13 +92,12 @@ def get_config(arg=None):
     config.evals.val.steps = 2
     config.evals.val.cache_final = False
     if "timing" in config.evals: config.evals.timing.steps = 2
-    if "fewshot" in config.evals: config.evals.fewshot.log_steps = 2
     if "fewshot" in config.evals: config.evals.fewshot.steps = 2
     config.model.depth = [1, 1, 1, 1]
     config.xprof = False
     del config.ckpt_steps
 
-  if run_test:
+  if arg.test:
     config.batch_size = 2
     config.total_epochs = None
     config.total_steps = 2

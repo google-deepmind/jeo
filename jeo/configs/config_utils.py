@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# pylint: disable=line-too-long
 """Utils and common structures across various models."""
+from typing import Any
 import ml_collections as mlc
 
 TRANSFORMERS = {
@@ -31,12 +31,114 @@ TRANSFORMERS = {
     "Ti": dict(num_layers=12, num_heads=3, mlp_dim=768, emb_dim=192),
     "S": dict(num_layers=12, num_heads=6, mlp_dim=1536, emb_dim=384),
     "M": dict(num_layers=12, num_heads=8, mlp_dim=2048, emb_dim=512),
-    "B": dict(num_layers=12, num_heads=12, mlp_dim=3072, emb_dim=768),  # B/16 (="base")
+    "B": dict(num_layers=12, num_heads=12, mlp_dim=3072, emb_dim=768),  # B/16
     "L": dict(num_layers=24, num_heads=16, mlp_dim=4096, emb_dim=1024),  # L/16
     "H": dict(num_layers=32, num_heads=16, mlp_dim=5120, emb_dim=1280),  # H/14
-    "g": dict(num_layers=40, num_heads=16, mlp_dim=6144, emb_dim=1408),  # mlp4x: 5632
-    "G": dict(num_layers=48, num_heads=16, mlp_dim=8192, emb_dim=1664),  # mlp4x: 6656
+    "g": dict(num_layers=40, num_heads=16, mlp_dim=6144, emb_dim=1408),
+    "G": dict(num_layers=48, num_heads=16, mlp_dim=8192, emb_dim=1664),
 }
+
+
+def convert_dict_to_string(d: dict[str, Any]) -> str:
+  return ",".join(f"{k}=\"{v}\"" if isinstance(v, str) else f"{k}={v}"
+                  for k, v in d.items())
+
+
+def parse_arg(arg, lazy=False, **spec):
+  """Parses a string of comma-separated key=value pairs.
+
+  Adapted from http://github.com/google-research/big_vision/tree/HEAD/big_vision/configs/config_utils.py.
+
+  Ways that values can be passed when launching:
+    --config amazing.py:runlocal,schedule=long,res=128
+    --config amazing.py:res=128
+    --config amazing.py:runlocal  # A boolean needs no value for "true".
+    --config amazing.py:runlocal=False  # Explicit false boolean.
+    --config amazing.py:128  # The first spec entry may be passed unnamed alone.
+
+  Uses strict bool conversion (converting 'True', 'true' to True, and 'False',
+    'false', '' to False).
+
+  Args:
+    arg: the string argument that's passed to get_config.
+    lazy: allow lazy parsing of arguments, which are not in spec. For these,
+      the type is auto-extracted in dependence of most complex possible type.
+    **spec: the name and default values of the expected options.
+      If the value is a tuple, the value's first element is the default value,
+      and the second element is a function called to convert the string.
+      Otherwise the type is automatically extracted from the default value.
+
+  Returns:
+    ConfigDict object with extracted type-converted values.
+  """
+  # Normalize arg and spec layout.
+  arg = arg or ""  # Normalize None to empty string
+  spec = {k: get_type_with_default(v) for k, v in spec.items()}
+
+  result = mlc.ConfigDict(type_safe=False)  # For convenient dot-access only.
+
+  # Expand convenience-cases for a single parameter without = sign.
+  if arg and "," not in arg and "=" not in arg:
+    # (think :runlocal) If it's the name of sth in the spec (or there is no
+    # spec), it's that in bool.
+    if arg in spec or not spec:
+      arg = f"{arg}=True"
+    # Otherwise, it is the value for the first entry in the spec.
+    else:
+      arg = f"{list(spec.keys())[0]}={arg}"
+      # Yes, we rely on Py3.7 insertion order!
+
+  # Now, expand the `arg` string into a dict of keys and values:
+  raw_kv = {raw_arg.split("=")[0]:
+                raw_arg.split("=", 1)[-1] if "=" in raw_arg else "True"
+            for raw_arg in arg.split(",") if raw_arg}
+
+  # And go through the spec, using provided or default value for each:
+  for name, (default, type_fn) in spec.items():
+    val = raw_kv.pop(name, None)
+    result[name] = type_fn(val) if val is not None else default
+
+  if raw_kv:
+    if lazy:  # Process args which are not in spec.
+      for k, v in raw_kv.items():
+        result[k] = autotype(v)
+    else:
+      raise ValueError(f"Unhandled config args remain: {raw_kv}")
+
+  return result
+
+
+def get_type_with_default(v):
+  """Returns (v, string_to_v_type) with lenient bool parsing."""
+  # For bool, do safe string conversion.
+  if isinstance(v, bool):
+    def strict_bool(x):
+      assert x.lower() in {"true", "false", ""}
+      return x.lower() == "true"
+    return (v, strict_bool)
+  # If already a (default, type) tuple, use that.
+  if isinstance(v, (tuple, list)):
+    assert len(v) == 2 and isinstance(v[1], type), (
+        "List or tuple types are currently not supported because we use `,` as"
+        " dumb delimiter. Contributions (probably using ast) welcome. You can"
+        " unblock by using a string with eval(s.replace(';', ',')) or similar")
+    return (v[0], v[1])
+  # Otherwise, derive the type from the default value.
+  return (v, type(v))
+
+
+def autotype(x):
+  """Auto-converts string to bool/int/float if possible."""
+  assert isinstance(x, str)
+  if x.lower() in {"true", "false"}:
+    return x.lower() == "true"  # Returns as bool.
+  try:
+    return int(x)  # Returns as int.
+  except ValueError:
+    try:
+      return float(x)  # Returns as float.
+    except ValueError:
+      return x  # Returns as str.
 
 
 def get_fewshot(target_resolution=224, resize_resolution=256, runlocal=False,

@@ -15,7 +15,7 @@
 """Metrics (currently heavily based on Hubways CLU metrics)."""
 from collections.abc import Callable
 import dataclasses
-from typing import Any
+from typing import Any, Sequence
 
 from clu import metrics as clu_metrics_builder
 import flax
@@ -398,6 +398,9 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
 
   def merge(self, other: "ConfusionMatrix") -> "ConfusionMatrix":
     assert self.matrix.shape == other.matrix.shape
+    # NOTE: For very large datasets the additions below could overflow, we are
+    # using only jnp.int32. Unfortunately JAX does not support jnp.int64 out of
+    # the box.
     return type(self)(matrix=self.matrix + other.matrix,
                       exclude_background_class=jnp.logical_or(  # pytype: disable=wrong-arg-types
                           self.exclude_background_class,
@@ -406,6 +409,73 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
   def compute(self) -> jnp.ndarray:
     """Returns confusion matrix."""
     return self.matrix
+
+
+def isin(x: jnp.ndarray, choices: int | Sequence[int]) -> jnp.ndarray:
+  """Returns elementwise True if `x`-element is in `choices`."""
+  if isinstance(choices, int):
+    return x == choices
+  return jnp.isin(x, jnp.array(choices))
+
+
+@flax.struct.dataclass
+class PerStrataBinaryConfusionMatrix(ConfusionMatrix):
+  """Computes confusion matrix per strata for binary classification.
+  """
+
+  @classmethod
+  def from_model_output(
+      cls,
+      labels: jnp.ndarray,  # (B,...) or (B,...,N)
+      logits: jnp.ndarray,  # (B,...,N)
+      label_weights: jnp.ndarray | None = None,  # (B,...)
+      mask: jnp.ndarray | None = None,  # (B,)
+      exclude_background_class: bool = False,
+      strata: jnp.ndarray | None = None,  # (B,)
+      predictions: jnp.ndarray | None = None,  # (B,...,N)
+      strata_size: int = 0,
+      true_label_ind: int | Sequence[int] = 1,
+      probability_threshold: float = 0.5,
+      **_,
+  ) -> clu_metrics_builder.Metric:
+    assert strata is not None and strata_size > 0
+    assert predictions is not None
+
+    if labels.ndim == predictions.ndim:
+      labels = jnp.argmax(labels, -1)  # Reverse one-hot encoding.
+    if mask is None:
+      mask = jnp.ones(labels.shape[0])
+    if label_weights is None:
+      label_weights = jnp.ones(labels.shape)
+    if label_weights.ndim != labels.ndim:
+      raise ValueError(f"Unequal shapes: label_weights({label_weights.shape}), "
+                       f"labels({labels.shape})")
+
+    pred = predictions[..., true_label_ind]
+    if not isinstance(true_label_ind, int):
+      pred = pred.sum(axis=-1)
+    pred = jnp.where(pred >= probability_threshold, 1, 0).flatten()
+    strata = strata.flatten()
+    if strata.ndim < labels.ndim:
+      strata = jnp.expand_dims(strata,
+                               axis=tuple(np.arange(strata.ndim, labels.ndim)))
+    strata = jnp.broadcast_to(strata, labels.shape).flatten()
+    true = jnp.where(isin(labels, true_label_ind), 1, 0).flatten()
+    num_classes = 2
+
+    # If samples are masked out (due to batch padding or excluding background
+    # labels), set value to `num_classes`, which will be ignored in BCOO for
+    # a (num_classes, num_classes) matrix.
+    masked_label_weights = (label_weights * jnp.expand_dims(mask, list(range(
+        mask.ndim, label_weights.ndim)))).flatten().astype(bool)
+    pred = jnp.where(masked_label_weights, pred, num_classes)
+    true = jnp.where(masked_label_weights, true, num_classes)
+    strata = jnp.where(masked_label_weights, strata, strata_size)
+    confusion_matrix = jax.experimental.sparse.BCOO(
+        (jnp.ones(len(true), "int32"), jnp.stack((strata, pred, true), 1)),
+        shape=(strata_size, num_classes, num_classes)).todense()
+
+    return cls(matrix=confusion_matrix)
 
 
 @flax.struct.dataclass
@@ -593,20 +663,123 @@ class RMSE(MSE):
 
 
 @flax.struct.dataclass
-class UMAD(clu_metrics_builder.Average):
-  """Unweighted mean absolute difference of `logits` and `labels`."""
+class MAE(clu_metrics_builder.Average):
+  """Computes the mean absolute error from model outputs `logits` and `labels`.
+
+  Can be used for regression tasks. Please check that logits is the right
+  comparison variable, or whether normalization or standardization is needed.
+  """
 
   @classmethod
   def from_model_output(
-      cls, *, logits: jnp.ndarray, labels: jnp.ndarray, **kwargs
+      cls,
+      *,
+      logits: jnp.ndarray,
+      labels: jnp.ndarray,
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
+      **kwargs,
   ) -> clu_metrics_builder.Metric:
     logits = jnp.squeeze(logits)
     labels = jnp.squeeze(labels)
-    if logits.ndim != labels.ndim:
-      raise ValueError(
-          f"Expected logits.ndim={logits.ndim}==labels.ndim={labels.ndim}"
+    assert logits.ndim == labels.ndim
+    if label_weights is not None:  # Or per-pixel weights.
+      if mask is None:
+        mask = label_weights
+      else:
+        mask = label_weights * jnp.expand_dims(
+            mask, list(range(mask.ndim, label_weights.ndim))
+        )
+    if mask is not None:
+      # Squeeze local batch size of one when then number of tpu chips is equal
+      # to batch size.
+      mask = jnp.squeeze(mask)
+    return super().from_model_output(
+        values=(jnp.abs(logits - labels)), mask=mask, **kwargs
+    )
+
+
+def get_stratified_avg_metric(metric_name: str):
+  """Create a stratified metric from a base metric class."""
+
+  try:
+    metric_fn, compute_fn = {
+        "mae": (lambda logits, labels: jnp.abs(logits - labels), lambda l: l),
+        "mse": (lambda logits, labels: (logits - labels) ** 2, lambda l: l),
+        "rmse": (lambda logits, labels: (logits - labels) ** 2, jnp.sqrt),
+    }[metric_name]
+  except KeyError as e:
+    raise ValueError(f"Unsupported stratified metric: {metric_name}") from e
+
+  @flax.struct.dataclass
+  class StratifiedAveragedMetric(clu_metrics_builder.Metric):
+    """Computes stratified metric from model outputs `logits` and `labels`."""
+
+    totals: jnp.ndarray
+    counts: jnp.ndarray
+
+    @classmethod
+    def from_model_output(
+        cls,
+        *,
+        logits: jnp.ndarray,
+        labels: jnp.ndarray,
+        stratification_bins: jnp.ndarray,
+        label_weights: jnp.ndarray | None = None,
+        mask: jnp.ndarray | None = None,
+        **kwargs,
+    ) -> clu_metrics_builder.Metric:
+      logits = jnp.squeeze(logits)
+      labels = jnp.squeeze(labels)
+      assert logits.ndim == labels.ndim
+      if label_weights is not None:  # Or per-pixel weights.
+        if mask is None:
+          mask = label_weights
+        else:
+          mask = label_weights * jnp.expand_dims(
+              mask, list(range(mask.ndim, label_weights.ndim))
+          )
+      else:
+        label_weights = 1.0
+      if mask is not None:
+        # Squeeze local batch size of one when then number of tpu chips is equal
+        # to batch size.
+        mask = jnp.squeeze(mask)
+      else:
+        mask = 1.0
+
+      # Compute which bin each label belongs as an integer index [1, N-1].
+      segment_ids = jnp.digitize(labels, jnp.array(stratification_bins)) - 1
+
+      label_mask = (label_weights > 0) & (mask > 0) & (segment_ids >= 0)
+      label_mask = label_mask.astype(jnp.float32)
+
+      metric_value = metric_fn(logits, labels)
+      metric_value = jnp.where(label_mask, metric_value, 0.0)
+
+      num_bins = len(stratification_bins) - 1
+      # Compute total metric value of each bin.
+      totals = jnp.bincount(
+          segment_ids.ravel(), weights=metric_value.ravel(), length=num_bins
       )
-    return super().from_model_output(values=jnp.abs(logits - labels), **kwargs)
+      # Compute number of labels in each bin.
+      counts = jnp.bincount(
+          segment_ids.ravel(), weights=label_mask.ravel(), length=num_bins
+      )
+
+      return cls(totals=totals.squeeze(), counts=counts.squeeze())
+
+    def merge(self, other):
+      _assert_same_shape(self.totals, other.totals)
+      return type(self)(
+          totals=self.totals + other.totals,
+          counts=self.counts + other.counts,
+      )
+
+    def compute(self) -> jnp.ndarray:
+      return compute_fn(self.totals / self.counts)
+
+  return StratifiedAveragedMetric
 
 
 @flax.struct.dataclass

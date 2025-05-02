@@ -130,8 +130,11 @@ def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
       metrics_dict[name] = clu_metrics.recall_at_precision_function_expensive(
           precision_point=precision_point
       )
-    elif reg_name == "umad" or reg_name == "mad":
-      metrics_dict[name] = clu_metrics.UMAD
+    elif reg_name in ["mae", "umad", "mad"]:
+      metrics_dict[name] = clu_metrics.MAE
+    elif reg_name.startswith("stratified_"):
+      _, metric_name = reg_name.split("_")
+      metrics_dict[name] = clu_metrics.get_stratified_avg_metric(metric_name)
     elif reg_name == "mse":
       metrics_dict[name] = clu_metrics.MSE
     elif reg_name == "rmse":
@@ -160,6 +163,9 @@ def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
       metrics_dict[name] = clu_metrics.MIoU
     elif reg_name == "confusion_matrix":  # non-scalar, excluded from XM.
       metrics_dict[name] = clu_metrics.ConfusionMatrix
+    elif reg_name == "strata_binary_confusion_matrix":
+      # non-scalar, excluded from XM.
+      metrics_dict[name] = clu_metrics.PerStrataBinaryConfusionMatrix
     elif reg_name == "min_logvar":
       metrics_dict[name] = clu_metrics.MinLogvar
     elif reg_name == "max_logvar":
@@ -213,7 +219,7 @@ def _get_metrics_inputs(
       assert "labels" not in metrics_inputs
       metrics_inputs["labels"] = inputs[key]
 
-  potential_model_inputs = ["label_weights", "mask"]
+  potential_model_inputs = ["label_weights", "mask", "corrupt_pixels"]
   for key in potential_model_inputs:
     if key in inputs:
       metrics_inputs[key] = inputs[key]

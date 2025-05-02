@@ -346,6 +346,27 @@ def l2_loss(
   return loss.mean() if reduction else loss
 
 
+def huber_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    delta: float = 1.0,
+) -> jnp.ndarray:
+  """Computes Huber loss."""
+  if logits.ndim == labels.ndim + 1:
+    logits = jnp.squeeze(logits, -1)
+  loss = optax.huber_loss(logits, labels, delta)
+  non_batch_axes = tuple(range(1, labels.ndim))
+  if weights is None:
+    loss = loss.mean(axis=non_batch_axes)
+  else:
+    norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
+    loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
+  return loss.mean() if reduction else loss
+
+
 ################################################################################
 #                             Probabilistic losses                             #
 ################################################################################
@@ -668,6 +689,7 @@ CLASSIFICATION_LOSS_FNS = {
 REGRESSION_LOSS_FNS = {
     "l2_loss": l2_loss,
     "kld_loss": kld_loss,
+    "huber_loss": huber_loss,
 }
 SEMANTIC_SEGMENTATION_LOSS_FNS = {
     "generalized_dice": generalized_dice,

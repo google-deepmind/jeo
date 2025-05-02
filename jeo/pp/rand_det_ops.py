@@ -216,3 +216,29 @@ def get_det_resize(
     return tf.cast(tf.image.resize(image, (h, w), method), image.dtype)
 
   return _det_crop
+
+
+@Registry.register("preprocess_ops.det_noise", replace=True)
+@pp_utils.InKeyOutKey(with_data=True)
+def get_det_noise(
+    noise_min=0.0,
+    noise_max=1.0,
+    multiplicative: bool = True,
+    randkey="noise",
+    pixel_wise: bool = True,
+):
+  """Deterministically insert multiplicative or additive noise."""
+
+  def _pp(image, data):
+    if pixel_wise:
+      # [0, 1] -> int32
+      seed = tf.cast(4e6 * data[randkey] - 2e6, "int32")
+      noise = tf.random.stateless_uniform(
+          image.shape, [seed, seed + 1], noise_min, noise_max, image.dtype
+      )
+    else:
+      # [0, 1] -> [noise_min, noise_max]
+      noise = (noise_max - noise_min) * data[randkey] + noise_min
+    return (image * noise) if multiplicative else (image + noise)
+
+  return _pp

@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 from jeo import losses
 from jeo.evaluators import builder as eval_builder
+from jeo.evaluators import utils
 
 
 DEFAULT_METRICS = ("acc", "f1", "aucpr", "prec", "recall", "loss")
@@ -31,6 +32,7 @@ class Evaluator(eval_builder.EvaluatorBase):
   def __init__(self, predict_fn, batch_size, loss_name="sigmoid_xent",
                multilabel=False, metrics=DEFAULT_METRICS, subsplit=None,
                subsplit_key="subsplit", multihead=False, loss_kw=None,
+               per_class_metrics=False, label_map=None,
                **data_config):
     self._setup_metrics_and_eval_iter(metrics, predict_fn)
     self.data_config = {"batch_size": batch_size, **data_config}
@@ -39,6 +41,8 @@ class Evaluator(eval_builder.EvaluatorBase):
     self.subsplit = subsplit
     self.multihead = multihead
     self.subsplit_key = subsplit_key
+    self.per_class_metrics = per_class_metrics  # Bool or list.
+    self.label_map = label_map
 
   def _get_eval_fn(self, predict_fn):
     """Produces eval function, also applies pmap."""
@@ -86,4 +90,8 @@ class Evaluator(eval_builder.EvaluatorBase):
       update = self.eval_fn(params, batch)
       self.metrics.update_state(flax.jax_utils.unreplicate(update))
     for k, v in self.metrics.result().items():
+      if k == "confusion_matrix" and self.per_class_metrics:
+        for name, value in utils.get_per_class_metrics(
+            v, self.label_map, metrics=self.per_class_metrics):
+          yield (name, value)
       yield (k, v)

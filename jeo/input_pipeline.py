@@ -16,6 +16,7 @@
 from collections.abc import Callable, Iterator, Sequence
 import functools
 import math
+import multiprocessing.pool
 from typing import Any
 
 from absl import logging
@@ -74,7 +75,47 @@ def _get_filter_fn(filter_fn: FilterFn | str | None) -> FilterFn | None:
   return filter_fn
 
 
-def get_data(
+def split_dataset_spatially(
+    data: tf.data.Dataset, n: int, shift: int, size: int,
+    keep_keys: Sequence[str], split_keys: Sequence[str]
+    ) -> tuple[tf.data.Dataset, int]:
+  """Splits each example in the dataset into n^2 examples.
+
+  Args:
+    data: Dataset to split.
+    n: Number of splits (along both x and y axes).
+    shift: X and Y pixelwise shift.
+    size: Size of each sub example.
+    keep_keys: All keys that need to be preserved.
+    split_keys: Keys that need to be split(cropped).
+
+  Returns:
+    A new dataset and a multiplier for the number of examples.
+  """
+  dx = tf.data.Dataset.range(n)
+  dy = tf.data.Dataset.range(n)
+
+  dxy = dx.window(1).map(lambda x: x.repeat())
+  dxy = dxy.flat_map(lambda x: tf.data.Dataset.zip((x, dy)))
+
+  data = data.window(1).map(lambda ds: tf.data.Dataset.zip(
+      tuple([ds[k] for k in keep_keys])).repeat())
+  data = data.flat_map(lambda x: tf.data.Dataset.zip((x, dxy)))
+
+  data = data.map(lambda x, y: ({k: x[i] for i, k in enumerate(keep_keys)} |
+                                {"dx": y[0] * shift, "dy": y[1] * shift}))
+  def crop(d):
+    for k in split_keys:
+      d[k] = d[k][..., d["dy"] : d["dy"] + size, d["dx"]: d["dx"] + size, :]
+      d[k] = tf.reshape(d[k],
+                        tuple(d[k].shape[:-3]) + (size, size, d[k].shape[-1]))
+    return d
+  data = data.map(crop)
+
+  return data, n * n
+
+
+def _get_single_ds(
     dataset: str,
     split: str,
     preprocess_fn: PreprocessFn | str,
@@ -84,6 +125,7 @@ def get_data(
     *,
     cache_raw: bool = False,
     cache_raw_keys: Sequence[str] = (),
+    batch_preprocess_fn: PreprocessFn | str = "",
     # For train==True only:
     shuffle_buffer_size: int | None = None,
     prefetch: int = 2,
@@ -91,13 +133,18 @@ def get_data(
     filter_final_fn: FilterFn | str | None = None,
     num_parallel_calls: int = 100,
     # For train==False only:
+    split_dataset_args: tuple[int, int, int,
+                              Sequence[str], Sequence[str]] | None = None,
     cache_final: bool = False,
     val_steps: int | None = None,  # num_batches per eval epoch.
     # For custom dataset loaders:
     dataset_module: str | None = None,
     skip_decode: Sequence[str] = ("image",),
     download_and_prepare: bool = False,
-    **kwargs
+    interleave_cycle_length: int | None = None,
+    wid: int | None = None,
+    data_service_address: str | None = None,
+    **kwargs,
 ) -> tuple[tf.data.Dataset, int]:
   """Returns dataset with the number of train examples or evaluation steps.
 
@@ -110,23 +157,32 @@ def get_data(
     train: Whether to prepare data for training or evaluation.
     cache_raw: Whether to cache the raw data before preprocessing.
     cache_raw_keys: List of keys to keep in the cached dataset.
+    batch_preprocess_fn: Preprocessing spec string or preprocessing function
+      applied on entire batches.
     shuffle_buffer_size: Shuffle buffer size.
     prefetch: Number of batches to prefetch.
     filter_fn: Filter function performed during preprocessing.
     filter_final_fn: Filter function applied after preprocessing.
     num_parallel_calls: Number of parallel calls for dataset map operations.
+    split_dataset_args: Arguments for split_dataset function.
     cache_final: Whether to cache the final (preprocessed) data.
     val_steps: Number of batches to take for evaluation. If None, will be
       derived from the dataset and batch size.
     dataset_module: Optional dataset module name (if not using TFDS).
     skip_decode: List of features to skip decoding.
     download_and_prepare: Download and prepare TFDS dataset.
+    interleave_cycle_length: Interleave cycle length.
+    wid: XManager work unit id (used for data service).
+    data_service_address: If using tf data service, this should be set to the
+      address of the service.
     **kwargs: Additional arguments passed to dataset loading functions.
   Returns:
     Prefetched tf.data.Dataset object of the training or evaluation split.
     Number of train examples in a single epoch if train=True, or the number of
       evaluation steps with the given batch size if train=False.
   """
+  if data_service_address and (cache_raw or cache_final):
+    raise ValueError("tf.data service is not supported for data caching.")
   filter_fn = _get_filter_fn(filter_fn)
   filter_final_fn = _get_filter_fn(filter_final_fn)
   if dataset_module:
@@ -139,11 +195,22 @@ def get_data(
     data, _ = get_dataset_tfds(
         dataset=dataset, split=split, shuffle_files=train,
         data_dir=data_dir, skip_decode=skip_decode,
-        download_and_prepare=download_and_prepare)
+        download_and_prepare=download_and_prepare,
+        interleave_cycle_length=interleave_cycle_length)
 
   if not callable(preprocess_fn):
     preprocess_fn = pp_builder.get_preprocess_fn(preprocess_fn, log_steps=True)
+  if not callable(batch_preprocess_fn):
+    batch_preprocess_fn = pp_builder.get_preprocess_fn(
+        batch_preprocess_fn, log_steps=True
+    )
   data = _add_tpu_host_options(data)
+
+  num_examples_multiplier = 1
+  if split_dataset_args:
+    data, num_examples_multiplier = split_dataset_spatially(data,
+                                                            *split_dataset_args)
+
   # Use data filtering at your own risk: the actual split sizes won't be known
   # in advance, so many things can go wrong in the code.
   if filter_fn:
@@ -172,15 +239,34 @@ def get_data(
       if filter_final_fn:
         data = data.filter(filter_final_fn)
       data = data.cache()
-      data = data.repeat(None)  # repeat data indefinetely
+      data = data.repeat(None)  # repeat data indefinitely
     else:
-      data = data.repeat(None)  # repeat data indefinetely
+      data = data.repeat(None)  # repeat data indefinitely
       data = data.map(preprocess_fn, num_parallel_calls=num_parallel_calls)
       if filter_final_fn:
         data = data.filter(filter_final_fn)
     data = data.shuffle(shuffle_buffer_size) if shuffle_buffer_size else data
-    # Drop remainder makes shape fully static, so we can later use it if needed.
-    data = data.batch(batch_size, drop_remainder=True)
+    if batch_size > 0:
+      # Drop remainder makes shape fully static, so we can later use it if
+      # needed.
+      data = data.batch(batch_size, drop_remainder=True)
+
+    # Preprocessing applied on entire batches, e.g. reshaping or cut-mix.
+    data = data.map(batch_preprocess_fn, num_parallel_calls)
+
+    if data_service_address:
+      data = data.apply(
+          tf.data.experimental.service.distribute(
+              # TODO: DYNAMIC sharding would be more correct here
+              # as it would mix the data better. But currently it doesn't work
+              # with the rest of the jeo data pipeline, giving this issue:
+              # (internal link)
+              processing_mode=tf.data.experimental.service.ShardingPolicy.OFF,
+              service=data_service_address,
+              job_name=f"train_data/{wid}/{dataset}/{split}".replace(
+                  ":", "_").replace(".", "_"),
+          )
+      )
     return data.prefetch(prefetch), num_examples
   else:
     # Filtering eval data can break down the logic and should be avoided.
@@ -191,8 +277,9 @@ def get_data(
     if not val_steps:
       if dataset_module is None:  # TFDS dataset.
         splits = tfds.even_splits(split, jax.process_count())
-        split_examples = [get_num_examples(dataset, s, data_dir)
-                          for s in splits]
+        split_examples = [
+            get_num_examples(dataset, s, data_dir) * num_examples_multiplier
+            for s in splits]
         if filter_fn:
           # Potentially a costly operation over large datasets.
           num_examples = data.reduce(0, lambda x, _: x+1).numpy()
@@ -200,8 +287,9 @@ def get_data(
           num_examples = sum(split_examples)
         max_num_examples_per_host = max(split_examples)
       else:
-        num_examples = get_num_examples(dataset, split, data_dir,
-                                        dataset_module, **kwargs)
+        num_examples = get_num_examples(
+            dataset, split, data_dir, dataset_module,
+            **kwargs) * num_examples_multiplier
         # Approximation, assuming the examples were evenly distributed across
         # all hosts. This is not always true, but is not critical for train.
         # TODO: Get exact number of examples per host for auto_dataset.
@@ -221,12 +309,101 @@ def get_data(
     data = data.batch(batch_size, drop_remainder=True)
     data = data.take(val_steps)
 
+    # Preprocessing applied on entire batches, e.g. reshaping or mix-cut.
+    data = data.map(batch_preprocess_fn, num_parallel_calls)
+
     # Note we cache data after a finite number of batches is taken.
     data = data.cache() if cache_final else data
     data = data.repeat()
     logging.info("Non-train dataset %s split %s: val_steps=%s",
                  dataset, split, val_steps)
     return data.prefetch(1), val_steps
+
+
+def _get_mixture_ds(
+    dataset: Sequence[str],
+    split: str | Sequence[str],
+    batch_size: int,
+    dataset_weights: Sequence[float] | None = None,
+    prefetch: int = 2,
+    **kwargs) -> tuple[tf.data.Dataset, int]:
+  """Returns dataset with the number of train examples or evaluation steps.
+
+  Args:
+    dataset: Name of the dataset (or a list).
+    split: Name of the split (or a list).
+    batch_size: Batch size.
+    dataset_weights: Weights of each dataset (sample) or None if just weighting
+      by dataset sizes (each sample from any dataset has the same
+      weight/probability).
+    prefetch: Number of batches to prefetch.
+    **kwargs: Additional arguments passed to dataset loading functions.
+  Returns:
+    Prefetched tf.data.Dataset object of the training or evaluation split.
+    Number of train examples in a single epoch if train=True, or the number of
+      evaluation steps with the given batch size if train=False.
+  """
+  assert kwargs["train"]
+  if isinstance(split, str):
+    split = [split] * len(dataset)
+  assert len(dataset) == len(split)
+  if dataset_weights is None:
+    dataset_weights = [1] * len(dataset)
+  assert len(dataset_weights) == len(dataset)
+
+  names, datasets, totals = [], [], []
+  pool = multiprocessing.pool.ThreadPool(len(dataset))
+
+  def _make(dataset_and_split):
+    dataset, split = dataset_and_split
+    ds, total = _get_single_ds(dataset=dataset,
+                               split=split,
+                               batch_size=0,
+                               prefetch=0,
+                               **kwargs)
+    return f"{dataset}:{split}", ds, total  # pylint: disable=bad-whitespace
+
+  for name, dataset, total in pool.map(
+      _make, ((ds, sp) for ds, sp in zip(dataset, split))):
+    names.append(name)
+    datasets.append(dataset)
+    totals.append(total)
+
+  totals = [
+      total * weight for total, weight in zip(totals, dataset_weights)]
+
+  # Normalize the weights such that they sum up to 1.
+  weights = [x / sum(totals) for x in totals]
+
+  logging.info(
+      "NOTE: Total dataset mix size: %d\nContributions:\n%s", sum(totals),
+      "\n".join(f"{ds}: {n} ({w * 100:.2g}%)"  # pylint: disable=bad-whitespace
+                for ds, n, w in zip(names, totals, weights))
+  )
+
+  train_ds = tf.data.Dataset.sample_from_datasets(
+      datasets, weights, stop_on_empty_dataset=True)
+
+  train_ds = train_ds.batch(batch_size, drop_remainder=True)
+  return train_ds.prefetch(prefetch), sum(totals)
+
+
+def get_data(
+    dataset: str | Sequence[str], **kwargs) -> tuple[tf.data.Dataset, int]:
+  """Returns dataset with the number of train examples or evaluation steps.
+
+  Args:
+    dataset: Name of the dataset (or a list).
+    **kwargs: Additional arguments passed to dataset loading functions.
+  Returns:
+    Prefetched tf.data.Dataset object of the training or evaluation split.
+    Number of train examples in a single epoch if train=True, or the number of
+      evaluation steps with the given batch size if train=False.
+  """
+  if isinstance(dataset, str):
+    return _get_single_ds(dataset, **kwargs)
+
+  return _get_mixture_ds(dataset, **kwargs)
 
 
 def start_input_pipeline(
@@ -253,9 +430,12 @@ def start_input_pipeline(
   return it
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def get_builder(dataset: str, data_dir: str | None) -> tfds.core.DatasetBuilder:
-  return tfds.builder(dataset, data_dir=data_dir or None, try_gcs=True)
+  try:
+    return tfds.builder(dataset, data_dir=data_dir or None, try_gcs=True)
+  except tfds.core.registered.DatasetNotFoundError as exc:
+    raise ValueError(f"Dataset {dataset} not found in {data_dir}") from exc
 
 
 def get_dataset_tfds(
@@ -265,6 +445,7 @@ def get_dataset_tfds(
     data_dir: str | None = None,
     skip_decode: Sequence[str] = ("image",),
     download_and_prepare: bool = False,
+    interleave_cycle_length: int | None = None,
 ) -> tuple[tf.data.Dataset, tfds.core.DatasetBuilder]:
   """Returns TFDS dataset split."""
   builder = get_builder(dataset, data_dir)
@@ -275,15 +456,20 @@ def get_dataset_tfds(
       f: tfds.decode.SkipDecoding()
       for f in skip_decode if f in builder.info.features
   }
+  read_config = tfds.ReadConfig(
+      skip_prefetch=True,  # We prefetch after pipeline.
+      try_autocache=False,  # We control this, esp. for few-shot.
+      add_tfds_id=True,
+  )
+  if interleave_cycle_length:
+    # NOTE: Value "None" is different from the default value "MISSING". So we
+    # only overwrite it if it is explicitly set.
+    read_config.interleave_cycle_length = interleave_cycle_length
   # Each host is responsible for a fixed subset of data
   return builder.as_dataset(
       split=split,
       shuffle_files=shuffle_files,
-      read_config=tfds.ReadConfig(
-          skip_prefetch=True,  # We prefetch after pipeline.
-          try_autocache=False,  # We control this, esp. for few-shot.
-          add_tfds_id=True,
-      ),
+      read_config=read_config,
       decoders=skip_decoders), builder
 
 
