@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ class EvaluatorBase(abc.ABC):
   """Evaluator interface."""
 
   @abc.abstractmethod
-  def __init__(self, predict_fn, batch_size, metrics, **data_config):
+  def __init__(self, predict_fn, batch_size, metrics, **cfg):
     """Initializes the evaluator."""
 
   @abc.abstractmethod
@@ -41,43 +41,46 @@ class EvaluatorBase(abc.ABC):
     """Produces eval function, also applies pmap."""
 
   @abc.abstractmethod
-  def run(self, params):
+  def run(self, params, train_step):
     """Runs across evaluation data and computes all metrics."""
 
   def _setup_metrics_and_eval_iter(
-      self, metrics: Sequence[str], predict_fn: Callable[..., Any]
+      self,
+      metrics: Sequence[Any],
+      predict_fn: Callable[..., Any],
   ):
     self.metrics = jeo_metrics.MetricsCollection(metrics)
     self.metrics_fn = self.metrics.get_gather_fn()
     self.eval_fn = self._get_eval_fn(predict_fn)
 
-  def _setup_dataset(self, batch_size, **data_config):
+  def _setup_dataset(self, batch_size, **cfg):
     """Constructs dataset and sets steps and iter attributes."""
-    batch_size_per_host = batch_size // jax.process_count()
-    pp_fn = pp_builder.get_preprocess_fn(data_config["pp"])
+    batch_size_per_host = cfg.get("batch_size_per_host",
+                                  batch_size // jax.process_count())
+    pp_fn = pp_builder.get_preprocess_fn(cfg["pp"])
     ds, self.steps = input_pipeline.get_data(
         train=False,
-        dataset=data_config.get("dataset"),
-        split=data_config["split"],
-        data_dir=data_config.get("dataset_dir"),
-        dataset_module=data_config.get("dataset_module"),
-        **data_config.get("dataset_kwargs", {}),
+        dataset=cfg.get("dataset"),
+        split=cfg["split"],
+        data_dir=cfg.get("dataset_dir"),
+        dataset_module=cfg.get("dataset_module"),
+        **cfg.get("dataset_kwargs", {}),
         batch_size=batch_size_per_host,
         preprocess_fn=pp_fn,
-        filter_fn=data_config.get("filter_fn", None),
-        cache_raw=data_config.get("cache_raw", False),
-        cache_final=data_config.get("cache_final", False),
-        prefetch=(0 if data_config.get("cache_final", False)
-                  else data_config.get("prefetch_to_host", 2)),
-        val_steps=data_config.get("steps", None),
-        skip_decode=data_config.get("skip_decode", ("image",)))
+        filter_fn=cfg.get("filter_fn", None),
+        cache_raw=cfg.get("cache_raw", False),
+        cache_final=cfg.get("cache_final", False),
+        prefetch=(0 if cfg.get("cache_final", False)
+                  else cfg.get("prefetch_to_host", 2)),
+        val_steps=cfg.get("steps", None),
+        skip_decode=cfg.get("skip_decode", ("image",)))
     logging.info("Running validation for %d steps for %s, %s", self.steps,
-                 data_config["dataset"], data_config["split"])
+                 cfg["dataset"], cfg["split"])
     if self.steps <= 0:
       raise ValueError(f"Insufficient val steps. steps: {self.steps} "
                        f"batch_size_eval: {batch_size}")
     self.data_iter = input_pipeline.start_input_pipeline(
-        ds, data_config.get("prefetch_to_device", 1))
+        ds, cfg.get("prefetch_to_device", 1))
 
 
 def from_config(
@@ -122,6 +125,9 @@ def from_config(
       cfg["steps"] = cfg.get("steps", config.get("val_steps", None))
     # Pass skip_decode arg to all evaluators.
     cfg["skip_decode"] = config.get("skip_decode", ("image",))
+
+    cfg["workdir"] = workdir
+    cfg["evaluator_name"] = name
 
     module_cls = train_utils.import_module(module, "evaluators")
     if not callable(module_cls):

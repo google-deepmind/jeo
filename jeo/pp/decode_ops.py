@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,7 +51,9 @@ def get_decode_jeo_satellites(
         # If available, mask denotes valid pixels, and we need to reverse it.
         data[pad_mask_key] = ~tf.cast(data[pad_mask_key], tf.bool)
         if zero_pad:  # Set masked values to 0.
-          data[sat] = tf.where(data[pad_mask_key], 0., data[sat])
+          data[sat] = tf.where(
+              data[pad_mask_key], tf.cast(0.0, data[sat].dtype), data[sat]
+          )
       elif zero_pad:
         logging.warning("No mask available for satellite %s.", sat)
     return data

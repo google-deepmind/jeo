@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Simple trainer."""
-# pylint: disable=logging-fstring-interpolation, invalid-name
+
 from functools import partial  # pylint: disable=g-importing-member
 import multiprocessing.pool
 import os
@@ -25,6 +25,7 @@ from absl import logging
 from clu import parameter_overview
 import flax
 import jax
+from jax.experimental import multihost_utils
 import jax.numpy as jnp
 from jeo import input_pipeline
 from jeo import train_utils
@@ -43,18 +44,23 @@ import optax
 from tensorflow.io import gfile
 
 config_flags.DEFINE_config_file(
-    "config", None, "Training configuration.", lock_config=True)
+    "config", None, "Training configuration.", lock_config=True
+)
 flags.DEFINE_string("workdir", default=None, help="Work unit directory.")
-flags.DEFINE_boolean("cleanup", default=False,
-                     help="Delete workdir (only) after successful completion.")
+flags.DEFINE_boolean(
+    "cleanup",
+    default=False,
+    help="Delete workdir (only) after successful completion.",
+)
 flags.DEFINE_string(
     "file_group",
     default=None,
     help="Permission group to use for file storage, e.g. checkpointing.",
 )
 flags.DEFINE_string(
-    "data_service_address", None, "The address of the tf.data service "
-    "(currently only for training)."
+    "data_service_address",
+    None,
+    "The address of the tf.data service (currently only for training).",
 )
 
 
@@ -74,9 +80,13 @@ def _main(_):
   config = FLAGS.config
   workdir = FLAGS.workdir
   logging.info(
-      f"\u001b[33mHello from process {jax.process_index()} holding "
-      f"{jax.local_device_count()}/{jax.device_count()} devices and "
-      f"writing to workdir {workdir}.\u001b[0m")
+      "\u001b[33mHello from process %s holding %s/%s devices and writing to "
+      "workdir %s.\u001b[0m",
+      jax.process_index(),
+      jax.local_device_count(),
+      jax.device_count(),
+      workdir,
+  )
   train_utils.validate_and_update_config_inplace(config)
   os.umask(0o022); gfile.makedirs(workdir)
 
@@ -103,32 +113,41 @@ def _main(_):
 
   last_time_set_notes = 0
   notes_wait_time = config.get("notes_wait_time", 0)
-  def write_note(note):  # pylint:disable=function-redefined
+
+  def write_note(note):
     nonlocal last_time_set_notes
     if jax.process_index() == 0:
       # Don't write notes more than once every notes_wait_time seconds.
       # For experiments that run very fast, one could exhaust quota for analysis
-      # context service
+      # context service.
       if time.time() - last_time_set_notes >= notes_wait_time:
         last_time_set_notes = time.time()
         pool.apply_async(lambda note=note: xm_wu.set_notes(note))
       logging.info("NOTE: %s", note)
+
   write_note("Initializing...")
 
   batch_size = config.batch_size
   local_batch_size = batch_size // jax.process_count()
   if batch_size % jax.device_count() != 0:
-    raise ValueError(f"Batch sizes ({batch_size} must "
-                     f"be divisible by device number ({jax.device_count()})")
+    raise ValueError(
+        f"Batch sizes ({batch_size} must "
+        f"be divisible by device number ({jax.device_count()})"
+    )
   logging.info(
       "Global batch size %d on %d hosts results in %d local batch size. "
       "With %d dev per host (%d dev total), that's a %d per-device batch size.",
-      batch_size, jax.process_count(), local_batch_size,
-      jax.local_device_count(), jax.device_count(),
-      local_batch_size // jax.local_device_count())
+      batch_size,
+      jax.process_count(),
+      local_batch_size,
+      jax.local_device_count(),
+      jax.device_count(),
+      local_batch_size // jax.local_device_count(),
+  )
 
   mw = metric_writers.MetricWriter(
-      xid, wid,
+      xid,
+      wid,
   )
   chrono = train_utils.Chrono()
 
@@ -138,7 +157,6 @@ def _main(_):
       train=True,
       dataset=config.get("dataset"),
       split=config.get("train_split", "train"),
-      dataset_weights=config.get("dataset_weights", None),
       data_dir=fillin(config.get("dataset_dir")),
       dataset_module=config.get("dataset_module"),
       **config.get("dataset_kwargs", {}),
@@ -156,14 +174,18 @@ def _main(_):
   )
   # Start prefetching already.
   train_iter = input_pipeline.start_input_pipeline(
-      train_ds, config.get("prefetch_to_device", 1))
+      train_ds, config.get("prefetch_to_device", 1)
+  )
   steps_per_epoch = ntrain_img / batch_size
 
   # Get specific steps (configured as steps, epochs, examples or percent).
   total_steps = train_utils.steps("total", config, ntrain_img, batch_size)
+
   def get_steps(name, default=ValueError, cfg=config):
-    return train_utils.steps(name, cfg, ntrain_img, batch_size, total_steps,
-                             default)
+    return train_utils.steps(
+        name, cfg, ntrain_img, batch_size, total_steps, default
+    )
+
   log_training_steps = get_steps("log_training")
   keep_ckpt_steps = get_steps("keep_ckpt", None)
   ckpt_steps = get_steps("ckpt", None)
@@ -173,13 +195,17 @@ def _main(_):
 
   logging.info(
       "Running train for %d steps, that means %f epochs and %f steps per epoch",
-      total_steps, total_steps * batch_size / ntrain_img, steps_per_epoch)
+      total_steps,
+      total_steps * batch_size / ntrain_img,
+      steps_per_epoch,
+  )
   logging.info("train_ds element_spec: %s", train_ds.element_spec)
   logging.info("ntrain_img: %s", ntrain_img)
 
   if total_steps < 1:
     raise ValueError(
-        f"total_steps=={total_steps} will not do any training or evaluation.")
+        f"total_steps=={total_steps} will not do any training or evaluation."
+    )
 
   # ## Trainer section 3: Model, task, and optimizer initialization.
   write_note(f"Initializing {config.model_name} model...")
@@ -194,18 +220,25 @@ def _main(_):
   @partial(jax.jit, backend="cpu")
   def init(rng):
     batch = jax.tree.map(
-        lambda x: jnp.zeros((local_batch_size,) + x.shape[1:],  # pylint: disable=g-long-lambda
-                            x.dtype.as_numpy_dtype), train_ds.element_spec)
+        lambda x: jnp.zeros(
+            (local_batch_size,) + x.shape[1:],
+            x.dtype.as_numpy_dtype,
+        ),
+        train_ds.element_spec,
+    )
     inputs = task.model_inputs(batch)
     variables = model.init(
-        rng, *inputs,
-        train=config.get("train_at_init") or config.get("train_always"))
+        rng,
+        *inputs,
+        train=config.get("train_at_init") or config.get("train_always"),
+    )
     model_state, params = flax.core.pop(variables, "params")
     params = flax.core.unfreeze(params)
     # Set bias in the head to a low value, such that loss is small initially.
     if "init_head_bias" in config:
-      params["head"]["bias"] = jnp.full_like(params["head"]["bias"],
-                                             config["init_head_bias"])
+      params["head"]["bias"] = jnp.full_like(
+          params["head"]["bias"], config["init_head_bias"]
+      )
     return params, model_state
 
   eval_rng_names = {"stochastic"}
@@ -218,21 +251,24 @@ def _main(_):
   train_rng_names = init_rng_names | {"dropout", "mask", "masking"}
   # IMPORTANT: To make sure that the order of rngs is deterministic we convert
   # them to lists and sort them. For example operation "|" on dicts is not
-  # not deterministic on different hosts.
+  # deterministic on different hosts.
   init_rng_names = sorted(list(init_rng_names))
   eval_rng_names = sorted(list(eval_rng_names))
   train_rng_names = sorted(list(train_rng_names))
   # Keeping eval RNGs constant across all evals to avoid fluctuations.
-  eval_rngs = None if not eval_rng_names else dict(zip(
-      eval_rng_names, jax.random.split(rng, len(eval_rng_names))))
+  eval_rngs = (
+      None
+      if not eval_rng_names
+      else dict(zip(eval_rng_names, jax.random.split(rng, len(eval_rng_names))))
+  )
   rng, *rng_init = jax.random.split(rng, 1 + len(init_rng_names))
   rng_init = dict(zip(init_rng_names, rng_init))
-  jax.experimental.multihost_utils.assert_equal(eval_rngs, "non deterministic")
-  jax.experimental.multihost_utils.assert_equal(rng_init, "non deterministic")
+  multihost_utils.assert_equal(eval_rngs, "non deterministic")
+  multihost_utils.assert_equal(rng_init, "non deterministic")
 
   params_cpu, state_cpu = init(rng_init)
-  jax.experimental.multihost_utils.assert_equal(state_cpu, "non deterministic")
-  jax.experimental.multihost_utils.assert_equal(params_cpu, "non deterministic")
+  multihost_utils.assert_equal(state_cpu, "non deterministic")
+  multihost_utils.assert_equal(params_cpu, "non deterministic")
 
   if jax.process_index() == 0:
     num_params = sum(p.size for p in jax.tree.leaves(params_cpu))
@@ -245,8 +281,13 @@ def _main(_):
     mw.measure("num_arrays_learned", num_learn)
 
   write_note(f"Initializing {config.optax_name} optimizer...")
-  tx, sched_fns = bv_optax.make(config, params_cpu, sched_kw=dict(
-      batch_size=batch_size, total_steps=total_steps, data_size=ntrain_img))
+  tx, sched_fns = bv_optax.make(
+      config,
+      params_cpu,
+      sched_kw=dict(
+          batch_size=batch_size, total_steps=total_steps, data_size=ntrain_img
+      ),
+  )
 
   # We jit this, such that the arrays are created on the CPU, not device[0].
   opt_cpu = jax.jit(tx.init, backend="cpu")(params_cpu)
@@ -289,8 +330,9 @@ def _main(_):
     params = optax.apply_updates(params, updates)
     state = aux.pop("state")
 
-    grads_nonfrozen = bv_optax.replace_frozen(config.schedule, grads,
-                                              jnp.zeros(1))
+    grads_nonfrozen = bv_optax.replace_frozen(
+        config.schedule, grads, jnp.zeros(1)
+    )
     measurements["l2_grads"] = optax.global_norm(grads_nonfrozen)
     measurements["l2_params"] = optax.global_norm(params)
     measurements["l2_updates"] = optax.global_norm(updates)
@@ -303,7 +345,7 @@ def _main(_):
   # Decide how to initialize training. The order is important.
   # 1. Always resumes from the existing checkpoint, e.g. resumes a finetune job.
   # 2. Resume from a previous checkpoint, e.g. start a cooldown training job.
-  # 3. Initialize model from something, e,g, start a fine-tuning job.
+  # 3. Initialize model from something, e.g., start a fine-tuning job.
   # 4. Train from scratch.
   resume_ckpt_path = None
   if save_ckpt_path and gfile.exists(save_ckpt_path):
@@ -312,8 +354,12 @@ def _main(_):
     resume_ckpt_path = fillin(config.resume)
   if resume_ckpt_path:
     write_note("Resume training from checkpoint...")
-    checkpoint = {"params": params_cpu, "opt": opt_cpu, "chrono": chrono.save(),
-                  **state_cpu}
+    checkpoint = {
+        "params": params_cpu,
+        "opt": opt_cpu,
+        "chrono": chrono.save(),
+        **state_cpu,
+    }
     ckpt_tree = jax.tree.structure(checkpoint)
     loaded = checkpointing.load_checkpoint(resume_ckpt_path, ckpt_tree)
     # bfloat16 type gets lost when data is saved to disk, so we recover it.
@@ -324,18 +370,29 @@ def _main(_):
   elif config.get("model_init"):
     write_note(f"Initialize model from {config.model_init}...")
     params_cpu, state_cpu = train_utils.load(
-        model_mod.load, params_cpu, config.model_init, config.get("model"),
-        **config.get("model_load", {}), init_state=state_cpu)
+        model_mod.load,
+        params_cpu,
+        config.model_init,
+        config.get("model"),
+        **config.get("model_load", {}),
+        init_state=state_cpu,
+    )
     if jax.process_index() == 0:
       parameter_overview.log_parameter_overview(
-          params_cpu, msg="restored params")
+          params_cpu, msg="restored params"
+      )
 
   # ## Trainer section 6: Pre-loop misc stuff.
   write_note("Kicking off misc stuff...")
   first_step = bv_optax.get_count(opt_cpu)
-  chrono.inform(first_step=first_step, total_steps=total_steps,
-                global_bs=batch_size, steps_per_epoch=steps_per_epoch,
-                measure=mw.measure, write_note=write_note)
+  chrono.inform(
+      first_step=first_step,
+      total_steps=total_steps,
+      global_bs=batch_size,
+      steps_per_epoch=steps_per_epoch,
+      measure=mw.measure,
+      write_note=write_note,
+  )
   prof = None  # Keeps track of start/stop of profiler state.
 
   write_note(f"Replicating...\n{chrono.note}")
@@ -346,12 +403,16 @@ def _main(_):
   # We do not jit/pmap this function, because it is passed to evaluator that
   # does it later. We output as many intermediate tensors as possible for
   # maximal flexibility. Later `jit` will prune out things that are not needed.
-  predict_fn = task.get_predict_fn(model, rngs=eval_rngs,
-                                   train=config.get("train_always"))
+  predict_fn = task.get_predict_fn(
+      model, rngs=eval_rngs, train=config.get("train_always")
+  )
   evaluators = eval_builder.from_config(
-      config, predict_fn,
+      config,
+      predict_fn,
       lambda s: write_note(f"Init evaluator: {s}...\n{chrono.note}"),
-      get_steps, workdir)
+      get_steps,
+      workdir,
+  )
   early_stopper = early_stopping.from_config(config, steps_per_epoch)
 
   _, rng_loop = jax.random.split(rng, 2)
@@ -359,25 +420,29 @@ def _main(_):
   ckpt_writer = None
 
   def run_evaluators(step, stop_training=False):
-    # Run evaluators.
     saved_metrics = {}
-    for (name, evaluator, log_steps, prefix) in evaluators:
-      if (train_utils.itstime(step, log_steps, total_steps, first=False)
-          or stop_training):
+    for name, evaluator, log_steps, prefix in evaluators:
+      if (
+          train_utils.itstime(step, log_steps, total_steps, first=False)
+          or stop_training
+      ):
         chrono.pause(wait_for=(params_repl, state_repl))
         write_note(f"{name} evaluation...\n{chrono.note}")
-        for key, value in evaluator.run({"params": params_repl, **state_repl}):
+        for key, value in evaluator.run({"params": params_repl, **state_repl},
+                                        train_step=step):
           mw.measure(f"{prefix}{key}", value)
-          stop_training |= early_stopper.should_stop(step, f"{prefix}{key}",
-                                                     value)
+          stop_training |= early_stopper.should_stop(
+              step, f"{prefix}{key}", value
+          )
           saved_metrics[f"{prefix}{key}"] = value
         chrono.resume()
     if saved_metrics and not jax.process_index():
       if stop_training or step == total_steps:  # Always at the end.
         pool.apply_async(train_utils.save_metrics, (workdir, saved_metrics))
       elif config.get("save_metrics_at_each_eval"):  # At each eval.
-        pool.apply_async(train_utils.save_metrics,
-                         (workdir, saved_metrics, step))
+        pool.apply_async(
+            train_utils.save_metrics, (workdir, saved_metrics, step)
+        )
 
   if first_step == 0 and config.get("eval_first_step", True):
     mw.step_start(first_step)
@@ -396,50 +461,65 @@ def _main(_):
   # Using a python integer for step here, because opt.state.step is allocated
   # on TPU during replication.
   for step, train_batch in zip(
-      range(first_step + 1, total_steps + 1), train_iter):
+      range(first_step + 1, total_steps + 1), train_iter
+  ):
     mw.step_start(step)
 
     if do_train:
       with jax.profiler.StepTraceAnnotation("train_step", step_num=step):
-        (params_repl, state_repl, opt_repl, rngs_loop, loss_value, measurements
-         ) = update_fn(params_repl, state_repl, opt_repl, rngs_loop,
-                       train_batch)
+        (
+            params_repl,
+            state_repl,
+            opt_repl,
+            rngs_loop,
+            loss_value,
+            measurements,
+        ) = update_fn(params_repl, state_repl, opt_repl, rngs_loop, train_batch)
       if jax.process_index() == 0:
         train_metrics.append({"training_loss": loss_value, **measurements})
 
       # On the first host, let's always profile a handful of early steps.
       if jax.process_index() == 0 and config.get("xprof", True):
-        prof = train_utils.startstop_prof(prof, step, first_step,
-                                          log_training_steps)
+        prof = train_utils.startstop_prof(
+            prof, step, first_step, log_training_steps
+        )
 
     # Checkpoint saving.
-    if (do_train and save_ckpt_path and
-        train_utils.itstime(step, ckpt_steps, total_steps, host=0,
-                            first=False)):
+    if (do_train and save_ckpt_path and train_utils.itstime(
+        step, ckpt_steps, total_steps, host=0, first=False)):  # fmt: skip
       chrono.pause(wait_for=(params_repl, opt_repl, state_repl))
-      train_utils.checkpointing_timeout(ckpt_writer,
-                                        config.get("ckpt_timeout", 1))
+      train_utils.checkpointing_timeout(
+          ckpt_writer, config.get("ckpt_timeout", 1)
+      )
       # We need to transfer the weights over now or else we risk keeping them
       # alive while they'll be updated in a future step, creating hard to debug
       # memory errors (see (internal link)). Also, takes device 0's params only.
       params_cpu = jax.tree.map(lambda x: np.array(x[0]), params_repl)
-      opt_cpu, state_cpu = jax.tree.map(lambda x: np.array(x[0]),
-                                        (opt_repl, state_repl))
+      opt_cpu, state_cpu = jax.tree.map(
+          lambda x: np.array(x[0]), (opt_repl, state_repl)
+      )
       # Check whether we want to keep a copy of the current checkpoint.
       copy_step = None
       if train_utils.itstime(step, keep_ckpt_steps, total_steps):
         copy_step = step
-      checkpoint = {"params": params_cpu, "opt": opt_cpu,
-                    "chrono": chrono.save(), **state_cpu}
+      checkpoint = {
+          "params": params_cpu,
+          "opt": opt_cpu,
+          "chrono": chrono.save(),
+          **state_cpu,
+      }
       ckpt_writer = pool.apply_async(
           checkpointing.save_checkpoint,
           (checkpoint, save_ckpt_path, copy_step, FLAGS.file_group),
       )
       chrono.resume()
     # Report training progress.
-    if (do_train and
-        train_utils.itstime(step, log_training_steps, total_steps, host=0)
-        or chrono.warmup and jax.process_index() == 0):
+    if (
+        do_train
+        and train_utils.itstime(step, log_training_steps, total_steps, host=0)
+        or chrono.warmup
+        and jax.process_index() == 0
+    ):
       for i, sched_fn_cpu in enumerate(sched_fns_cpu):
         mw.measure(f"global_schedule{i if i else ''}", sched_fn_cpu(step - 1))
       l = mw.measure("training_loss", loss_value[0])  # pylint: disable=undefined-variable
@@ -452,8 +532,10 @@ def _main(_):
       train_metrics = []
       chrono.tick(step, mw.measure, write_note)
       if not np.isfinite(l):
-        error = (f"The loss became nan or inf somewhere within steps "
-                 f"[{step - log_training_steps}, {step}]")
+        error = (
+            "The loss became nan or inf somewhere within steps "
+            f"[{step - log_training_steps}, {step}]"
+        )
         break
 
     run_evaluators(step, stop_training)

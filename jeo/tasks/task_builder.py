@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Task builder."""
+
 import abc
 from collections.abc import Callable, Sequence
 import functools
@@ -68,12 +69,10 @@ class TaskBase(abc.ABC):
     """
     batch = batches[0]
     if self.input_as_dict:
-      return ({k: v for k, v in batch.items() if k in self.modalities},)
+      return ({k: batch[k] for k in self.modalities},)
     return tuple(batch[m] for m in self.modalities)
 
-  def get_predict_fn(
-      self, model: nn.Module, rngs=None, train=False
-  ) -> PredictFn:
+  def get_predict_fn(self, model: nn.Module, rngs=None, train=False):
     """Returns a function that extracts inference outputs from the given model.
 
     Args:
@@ -103,11 +102,25 @@ class TaskBase(abc.ABC):
 
     return predict_fn
 
+  def get_infer_fn(self, params, model: nn.Module, rngs=None):
+    predict_fn = self.get_predict_fn(model, rngs, train=False)
+    infer_postprocessing_fn = self.get_infer_postprocessing_fn()
+
+    def infer_fn(batch):
+      model_outputs = predict_fn(params, **batch)
+      return infer_postprocessing_fn(model_outputs)
+
+    return infer_fn
+
   @abc.abstractmethod
   def get_loss_and_aux(
       self, model_outputs, *batches: Mapping, train: bool = False
   ) -> tuple[FloatOrArr, dict[str, FloatOrArr]]:
     ...
+
+  def get_infer_postprocessing_fn(self):
+    """Returns a function to postprocess model outputs for inference."""
+    raise NotImplementedError()
 
 
 COMMON_TASKS = {
@@ -138,8 +151,9 @@ def from_config(config):
     task_cls = getattr(task_cls, "Task")
 
   args = {"loss_name": config.loss} if "loss" in config else {}
-  args.update(loss_kw=config.get("loss_kw", {}), **config.get("task_kw", {}))
+  args["loss_kw"] = config.get("loss_kw", {})
+  args |= config.get("task_kw", {})
 
-  logging.info("Seting up task `%s` in class `%s` with args: %s",
+  logging.info("Setting up task `%s` in class `%s` with args: %s",
                task_type, task_cls, args)
   return task_cls(**args)

@@ -43,7 +43,7 @@ repository = "https://github.com/google-deepmind/jeo"
 changelog = "https://github.com/google-deepmind/jeo/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-# Development deps (unittest, linting, formating,...)
+# Development deps (unittest, linting, formatting,...)
 # Installed through `pip install -e .[dev]`
 dev = [
     "pytest",

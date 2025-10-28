@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """ResNet V1 with GroupNorm.
 
 Forked from http://github.com/google-research/big_vision/tree/HEAD/big_vision/models/bit.py
-to support addaptive num_groups in GroupNorm.
+to support adaptive num_groups in GroupNorm.
 """
 from collections.abc import Sequence
 

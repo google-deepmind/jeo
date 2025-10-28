@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -162,13 +162,25 @@ def validate_and_update_config_inplace(config: ml_collections.ConfigDict):
   logging.info("Updated config: \n%s", config)
 
 
+def _disabled_seek(*_):
+  raise AttributeError("seek() is disabled on this object.")
+
+
 def save_metrics(workdir: str, metrics: dict[str, Any],
                  step: int | None = None):
+  """Saves metrics as npz."""
   path = os.path.join(workdir, "metrics.npz")
   with gfile.GFile(path, "wb") as f:
+    setattr(f, "seek", _disabled_seek)
     np.savez(f, **metrics)
   if step is not None:
-    step_path = os.path.join(workdir, f"_metrics-{step:09d}.npz")
+    gfile.makedirs(
+        os.path.join(workdir, "intermediate_metrics"),
+        mode=gfile.LEGACY_GROUP_WRITABLE_WORLD_READABLE,
+    )
+    step_path = os.path.join(
+        workdir, "intermediate_metrics", f"metrics-{step:09d}.npz"
+    )
     gfile.copy(path, step_path, overwrite=True)
 
 
@@ -541,7 +553,7 @@ def steps(
     return config[f"{prefix}_steps"]
 
   def to_integer(x):
-    # Round to nearest but always executed at least one step unless explictily
+    # Round to nearest but always executed at least one step unless explicitly
     # asked for 0. E.g. total_epochs=0 vs total_epochs=0.0001
     return max(1, round(x)) if x else 0
 

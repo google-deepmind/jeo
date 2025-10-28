@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -265,23 +265,17 @@ def get_central_crop(crop_size: int | None = None):
 
 @Registry.register("preprocess_ops.extract_patches", replace=True)
 @pp_utils.InKeyOutKey(indefault="image", outdefault="image")
-def get_extract_patches(crop_size: int, padding: str, flatten: bool = False):
+def get_extract_patches(crop_size: int, stride: int = 1, flatten: bool = False):
   """Extract overlapping patches from an image.
 
   Args:
     crop_size: the height and width of the patches to extract.
-    padding: If VALID, only patches which are fully contained in the input image
-      are included. If SAME, all patches whose starting point is inside the
-      input are included, and areas outside the input default to zero.
+    stride: The stride of the extraction in the height and width dimensions.
     flatten: If True, the patches are flattened into a 1D vector.
 
   Returns:
     A function, that extracts patches.
   """
-  assert padding in [
-      "VALID",
-      "SAME",
-  ], f"Unsupported padding: {padding}. Available options are: VALID, SAME."
 
   def _extract(image):
     # The extracted patches function only takes 4D tensors.
@@ -294,9 +288,9 @@ def get_extract_patches(crop_size: int, padding: str, flatten: bool = False):
         tf.image.extract_patches(
             image,
             sizes=[1, crop_size, crop_size, 1],
-            strides=[1, 1, 1, 1],
+            strides=[1, stride, stride, 1],
             rates=[1, 1, 1, 1],
-            padding=padding,
+            padding="VALID",
         ),
         (-1, *out_shape, image.shape[-1]),
     )
@@ -705,3 +699,17 @@ def get_pansharpen(
     return data
 
   return _pansharpen
+
+
+@Registry.register("preprocess_ops.to_grayscale", replace=True)
+@pp_utils.InKeyOutKey(indefault="image", outdefault="image")
+def get_to_grayscale(keep_dims: bool = True):
+  """Converts rgb images to grayscale."""
+
+  def _pp(image):
+    image = tf.image.rgb_to_grayscale(image)
+    if not keep_dims:
+      image = tf.squeeze(image, axis=-1)
+    return image
+
+  return _pp

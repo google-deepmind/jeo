@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ Organizes losses coarsely into:
 import functools
 from typing import Any
 
+import chex
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -38,11 +39,17 @@ import optax
 ################################################################################
 #                            Classification losses                             #
 ################################################################################
-def softmax_xent(*, logits, labels, reduction=True, kl=False, axis=-1):
+def softmax_xent(
+    *, logits, labels, reduction=True, kl=False, axis=-1, weights=None
+):
   log_p = jax.nn.log_softmax(logits, axis=axis)
   nll = -jnp.sum(labels * log_p, axis=axis)
   if kl:
     nll += jnp.sum(labels * jnp.log(jnp.clip(labels, 1e-8)), axis=axis)
+  if weights is not None:
+    if weights.ndim == nll.ndim - 1:
+      weights = weights[..., None]
+    nll = nll * weights
   return jnp.mean(nll) if reduction else nll
 
 
@@ -77,7 +84,57 @@ def generalized_softmax_xent(
   if weights is not None:
     loss = loss * weights
 
-  non_batch_axes = range(1, targets.ndim - 1)
+  non_batch_axes = tuple(range(1, targets.ndim - 1))
+  loss = loss.sum(axis=non_batch_axes)
+  if normalize:
+    if weights is None:
+      normalizing_factor = jnp.prod(jnp.array(targets.shape[1:-1]))
+    else:
+      normalizing_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
+    loss = loss / normalizing_factor
+
+  return loss.mean() if reduction else loss
+
+
+def lq_loss(
+    *,
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    label_smoothing: float = 0.0,
+    normalize: bool = True,
+    q: float = 0.7,
+) -> jnp.ndarray:
+  """Computes Lq (Generalized Cross Entropy, GCE) loss.
+
+  Args:
+   logits: [B, ..., num_classes] float array.
+   labels: One-hot encoded labels (B, ..., N) or int labels (B, ...).
+   reduction: reduce across batch dim.
+   weights: None or array of shape [B, ...].
+   label_smoothing: label smoothing constant, used to determine the on and off
+     values.
+   normalize: normalize each batch item loss by the number of elements (pixels,
+     tokens) in it. Otherwise, each pixel/token losses are added together.
+   q: The q parameter for the Lq loss. Should be in [0, 1) (0 for cross entropy,
+     1 for MAE).
+
+  Returns:
+    Scalar loss () or per_batch_item loss (B,).
+  """
+  targets = get_soft_targets(labels, logits, label_smoothing)
+  if q == 0:
+    loss = -jnp.sum(targets * jax.nn.log_softmax(logits), axis=-1)
+  else:
+    probs = jax.nn.softmax(logits)
+    p_y = jnp.sum(targets * probs, axis=-1)
+    loss = (1.0 - (1e-7 + p_y)**q) / q
+
+  if weights is not None:
+    loss = loss * weights
+
+  non_batch_axes = tuple(range(1, targets.ndim - 1))
   loss = loss.sum(axis=non_batch_axes)
   if normalize:
     if weights is None:
@@ -169,7 +226,8 @@ def generalized_dice(
   if weights is None:
     weights = jnp.ones(targets.shape[:-1])
   # Expand last dimension to facilitate computation of denominator.
-  weights = jnp.expand_dims(weights, axis=-1)
+  if weights.ndim == logits.ndim - 1:
+    weights = weights[..., None]
   assert weights.ndim == logits.ndim
 
   if class_weights is None:
@@ -220,7 +278,7 @@ def _generalized_dice_coefficient(
     # Union with squared terms [B, C].
     norm = jnp.sum(probs**2 + labels**2, **kwargs)
   elif norm_type == "tanimoto":
-    # Union with squared terms minus interection [B, C].
+    # Union with squared terms minus intersection [B, C].
     norm = 2 * jnp.sum(probs**2 + labels**2 - probs * labels, **kwargs)
   elif norm_type == "tversky":
     # Union with squared terms that penalises false negative proportionally to
@@ -330,10 +388,14 @@ def l2_loss(
     *,
     reduction: bool = True,
     weights: jnp.ndarray | None = None,
+    do_onehot: bool = False,
     as_mse: bool = True) -> jnp.ndarray:
   """Computes L2 loss."""
   if logits.ndim == labels.ndim + 1:
-    logits = jnp.squeeze(logits, -1)
+    if do_onehot:
+      labels = jax.nn.one_hot(labels, logits.shape[-1])
+    else:
+      logits = jnp.squeeze(logits, -1)
   loss = optax.l2_loss(logits, labels)
   if as_mse:  # As mean squared error (optax above multiplies result with 0.5).
     loss *= 2
@@ -341,6 +403,35 @@ def l2_loss(
   if weights is None:
     loss = loss.mean(axis=non_batch_axes)
   else:
+    if weights.ndim == labels.ndim - 1:
+      weights = weights[..., None]
+    norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
+    loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
+  return loss.mean() if reduction else loss
+
+
+def l1_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    do_onehot: bool = False,
+    ) -> jnp.ndarray:
+  """Computes L1 (Mean Absolute Error) loss."""
+  if logits.ndim == labels.ndim + 1:
+    if do_onehot:
+      labels = jax.nn.one_hot(labels, logits.shape[-1])
+    else:
+      logits = jnp.squeeze(logits, -1)
+  chex.assert_equal_shape((logits, labels))
+  loss = jnp.abs(logits - labels)
+  non_batch_axes = tuple(range(1, labels.ndim))
+  if weights is None:
+    loss = loss.mean(axis=non_batch_axes)
+  else:
+    if weights.ndim == labels.ndim - 1:
+      weights = weights[..., None]
     norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
     loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
   return loss.mean() if reduction else loss
@@ -352,16 +443,22 @@ def huber_loss(
     *,
     reduction: bool = True,
     weights: jnp.ndarray | None = None,
+    do_onehot: bool = False,
     delta: float = 1.0,
 ) -> jnp.ndarray:
   """Computes Huber loss."""
   if logits.ndim == labels.ndim + 1:
-    logits = jnp.squeeze(logits, -1)
+    if do_onehot:
+      labels = jax.nn.one_hot(labels, logits.shape[-1])
+    else:
+      logits = jnp.squeeze(logits, -1)
   loss = optax.huber_loss(logits, labels, delta)
-  non_batch_axes = tuple(range(1, labels.ndim))
+  non_batch_axes = tuple(range(1, loss.ndim))
   if weights is None:
     loss = loss.mean(axis=non_batch_axes)
   else:
+    if weights.ndim == loss.ndim - 1:
+      weights = weights[..., None]
     norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
     loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
   return loss.mean() if reduction else loss
@@ -394,49 +491,147 @@ def gnll_loss(
   return loss.mean() if reduction else loss
 
 
+def _get_log_probs(x: jnp.ndarray, activation: str) -> jnp.ndarray:
+  """Transforms logits to log probabilities."""
+  if activation == "none":
+    if x.ndim == 1:
+      x = x[..., None]
+    if x.shape[-1] == 1:
+      x = jnp.concatenate([1 - x, x], axis=-1)
+    # We assume that in this case, logits are provided as probabilities.
+    return jnp.where(x == 0.0, 0, jnp.log(x))
+  if activation == "sigmoid":
+    # Binary logits converted to multiclass logits first because bernoulli kld
+    # is not available in optax.
+    if x.shape[-1] != 1:
+      x = x[..., None]
+    x = jnp.concatenate([jnp.zeros_like(x), x], axis=-1)
+    return jax.nn.log_softmax(x, axis=-1)
+  if activation == "softmax":
+    # or as logits (e.g. from a teacher model).
+    return jax.nn.log_softmax(x)
+  raise ValueError(f"Unsupported activation: {activation}")
+
+
 def kld_loss(
     logits: jnp.ndarray,
     labels: jnp.ndarray,
     *,
     reduction: bool = True,
-    gamma: float = 1.0,
-    activation: str = "sigmoid",
-) -> jnp.ndarray:  # {sigmoid, softmax, none}
+    weights: jnp.ndarray | None = None,
+    gamma: float | None = None,
+    activation: str = "sigmoid",  # {"sigmoid", "softmax", "none"}
+    labels_activation: str = "none",
+) -> jnp.ndarray:
   """Computes Kullback-Leibler divergence (relative entropy) loss."""
-  # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence
-  # loss = y_true * log(y_true / y_pred)
-  if logits.ndim == labels.ndim + 1:
-    logits = jnp.squeeze(logits, -1)
-  log_predictions = (
-      logits
-      if activation == "none"
-      else getattr(jax.nn, f"log_{activation}")(logits)
+  log_predictions = _get_log_probs(logits, activation)  # [B, ..., C]
+  log_labels = _get_log_probs(labels, labels_activation)  # [B, ..., C]
+
+  if log_predictions.shape != log_labels.shape:
+    raise ValueError(
+        "Received wrong shapes."
+        f" logits:{log_predictions.shape} labels:{log_labels.shape}."
+    )
+
+  loss = optax.losses.kl_divergence_with_log_targets(  # [B, ...]
+      log_predictions, log_labels
   )
-  # Based on optax.kl_divergence(), but avoiding loss.mean(-1).
-  loss = labels * (jnp.where(labels == 0, 0, jnp.log(labels)) - log_predictions)
-  # If activation is softmax, then we should sum over the class probabilities.
-  if activation == "softmax":
-    loss = jnp.sum(loss, axis=-1)
-  if gamma != 1.0:
-    # mmeka: We add a small constant to the loss before exponentation to guard
+
+  if gamma is not None:
+    # mmeka: We add a small constant to the loss before exponentiation to guard
     # against the gradient becoming Inf when `kld` is 0 e.g. without this
     # constant if `kld` is 0 and `kld_gamma` is 0.25 then the gradient
     # would be: 0.25 * pow(0, -0.75) = +Inf.
     loss = (loss + 1e-7) ** gamma
-  if loss.ndim > 1:  # Over non-batch axes.
-    loss = loss.mean(axis=range(1, loss.ndim))
+
+  # Pixels count normalization.
+  non_batch_axes = tuple(range(1, loss.ndim))
+  if weights is None:
+    loss = loss.mean(axis=non_batch_axes)
+  else:
+    if weights.ndim == loss.ndim - 1:
+      weights = weights[..., None]
+    norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
+    loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
+
   return loss.mean() if reduction else loss
 
 
 ################################################################################
 #                           Super-resolution losses                            #
 ################################################################################
+def generalized_supres_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    loss: str,
+    loss_kw: dict[str, Any] | None = None,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    border: int = 3,
+    brightness_bias: bool = False,
+) -> jnp.ndarray:
+  """Combines multiple losses with a weighted sum.
+
+  Args:
+    logits: [B, ..., C] float array with per class logits.
+    labels: One-hot encoded labels (B, ..., N) or int labels (B, ...).
+    loss: Loss function to use.
+    loss_kw: Keyword arguments for the loss function.
+    reduction: reduce across batch dim.
+    weights: None or array of shape [B, ...].
+    border: radius to search for best alignment between SR & HR.
+    brightness_bias: Whether to correct for brightness bias.
+
+  Returns:
+    Scalar loss () or per_batch_item loss (B,).
+  """
+  loss_fn = get_loss_fn(loss, **(loss_kw or {}))
+  b, h, w, *_ = logits.shape
+  assert logits.shape == labels.shape, f"hr.shape: {logits.shape}"
+
+  if weights is None:
+    weights = jnp.ones((b, h, w))
+  if weights.ndim == 4:
+    weights = weights.squeeze(-1)
+
+  max_shift = 2 * border
+  size_h = h - max_shift
+  size_w = w - max_shift
+  logits = logits[:, border:h - border, border:w - border]
+
+  losses_values = []
+  for i in range(max_shift + 1):
+    for j in range(max_shift + 1):
+      labels_shifted = labels[:, i:i+size_h, j:j+size_w]
+      weights_shifted = weights[:, i:i+size_h, j:j+size_w]
+
+      # Brightness bias correction.
+      if brightness_bias:
+        num_pixels = jnp.sum(weights_shifted, axis=range(1, weights.ndim))
+        nonbatch_axes = range(1, logits.ndim)
+        bias = jnp.sum(labels_shifted - logits, axis=nonbatch_axes) / num_pixels
+        logits = logits + jnp.expand_dims(bias, axis=nonbatch_axes)
+
+      losses_values.append(
+          loss_fn(
+              logits=logits,
+              labels=labels_shifted,
+              reduction=False,
+              weights=weights_shifted,
+          )
+      )
+
+  loss = jnp.stack(losses_values, axis=0).min(axis=0)  # (B,)
+  return loss.mean() if reduction else loss
+
+
 def supres_losses(sr, sr_sigma, hr, hr_mask=None, base_cpsnr=None,
                   border=3, use_l1=True, with_sigma=False,
                   brightness_bias=True, reduce_batch=True, reduce_spatial=True):
   """Computes loss and metrics for superresolution task.
 
-  - It can take misalignement into account and compute best metrics within small
+  - It can take misalignment into account and compute best metrics within small
     shift regions (controlled by border).
   - By default, it returns L1 loss. If l1=False, it returns L2 loss.
   - It performs brightness bias correction by default.
@@ -447,7 +642,7 @@ def supres_losses(sr, sr_sigma, hr, hr_mask=None, base_cpsnr=None,
     hr: High-res target images. (B,H,W,[C]).
     hr_mask: High-res target mask (0 for corrupted hr pixels). (B,H,W) or None.
     base_cpsnr: Baseline cPSNR. (B,) or None.
-    border: radius to search for best alignement between SR & HR.
+    border: radius to search for best alignment between SR & HR.
     use_l1: Returns L1 loss if True, or L2 otherwise.
     with_sigma: Whether to use sigma in loss computation (only L1 for now).
     brightness_bias: Whether to correct for brightness bias.
@@ -501,10 +696,10 @@ def supres_losses(sr, sr_sigma, hr, hr_mask=None, base_cpsnr=None,
         if brightness_bias:
           sr_sigma_ij += b
         sr_sigma_ij = sr_sigma_ij * hr_mask_ij
-        l1_loss = compute_l1_loss(sr_ij, hr_ij, num_pixels_masked, sr_sigma_ij)
+        l1l = compute_l1_loss(sr_ij, hr_ij, num_pixels_masked, sr_sigma_ij)
       else:
-        l1_loss = compute_l1_loss(sr_ij, hr_ij, num_pixels_masked)
-      l1.append(l1_loss)
+        l1l = compute_l1_loss(sr_ij, hr_ij, num_pixels_masked)
+      l1.append(l1l)
       mse.append(jnp.sum((sr_ij - hr_ij)**2, axis=nonbatch_axes)
                  / num_pixels_masked)
       cpsnr.append(-10.0 * jnp.log10(mse[-1]))
@@ -685,8 +880,10 @@ CLASSIFICATION_LOSS_FNS = {
     "softmax_xent": softmax_xent,
     "generalized_softmax_xent": generalized_softmax_xent,
     "softmax_focal_loss": softmax_focal_loss,
+    "lq_loss": lq_loss,
 }
 REGRESSION_LOSS_FNS = {
+    "l1_loss": l1_loss,
     "l2_loss": l2_loss,
     "kld_loss": kld_loss,
     "huber_loss": huber_loss,
@@ -695,6 +892,7 @@ SEMANTIC_SEGMENTATION_LOSS_FNS = {
     "generalized_dice": generalized_dice,
 }
 REGRESSION_SEGMENTATION_FNS = {  # Only for reference and testing.
+    "l1_loss": l1_loss,
     "l2_loss": l2_loss,
     "kld_loss": kld_loss,
     "sigmoid_xent": sigmoid_xent,
@@ -710,6 +908,7 @@ LOSS_FNS = {
     "supres": supres_losses,  # Doesn't follow current conventions.
     "weighted_losses_sum": weighted_losses_sum,
     "gnll_loss": gnll_loss,
+    "generalized_supres_loss": generalized_supres_loss,
     "unused": lambda *_, **__: None,
 }
 

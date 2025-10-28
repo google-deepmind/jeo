@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -116,7 +116,7 @@ def split_dataset_spatially(
 
 
 def _get_single_ds(
-    dataset: str,
+    dataset: str | None,
     split: str,
     preprocess_fn: PreprocessFn | str,
     batch_size: int,
@@ -124,7 +124,7 @@ def _get_single_ds(
     train: bool,
     *,
     cache_raw: bool = False,
-    cache_raw_keys: Sequence[str] = (),
+    keep_keys: Sequence[str] = (),
     batch_preprocess_fn: PreprocessFn | str = "",
     # For train==True only:
     shuffle_buffer_size: int | None = None,
@@ -133,8 +133,9 @@ def _get_single_ds(
     filter_final_fn: FilterFn | str | None = None,
     num_parallel_calls: int = 100,
     # For train==False only:
-    split_dataset_args: tuple[int, int, int,
-                              Sequence[str], Sequence[str]] | None = None,
+    split_dataset_args: (
+        tuple[int, int, int, Sequence[str], Sequence[str]] | None
+    ) = None,
     cache_final: bool = False,
     val_steps: int | None = None,  # num_batches per eval epoch.
     # For custom dataset loaders:
@@ -144,6 +145,8 @@ def _get_single_ds(
     interleave_cycle_length: int | None = None,
     wid: int | None = None,
     data_service_address: str | None = None,
+    data_service_max_outstanding_requests: int | None = None,
+    data_service_batch_size: int | None = None,
     **kwargs,
 ) -> tuple[tf.data.Dataset, int]:
   """Returns dataset with the number of train examples or evaluation steps.
@@ -156,7 +159,9 @@ def _get_single_ds(
     data_dir: Path to the data (can be None).
     train: Whether to prepare data for training or evaluation.
     cache_raw: Whether to cache the raw data before preprocessing.
-    cache_raw_keys: List of keys to keep in the cached dataset.
+    keep_keys: Subset of keys that are read from the tfds dataset. This avoids
+      reading features that are not used later on. This works for both cached
+      and non cached datasets.
     batch_preprocess_fn: Preprocessing spec string or preprocessing function
       applied on entire batches.
     shuffle_buffer_size: Shuffle buffer size.
@@ -175,7 +180,18 @@ def _get_single_ds(
     wid: XManager work unit id (used for data service).
     data_service_address: If using tf data service, this should be set to the
       address of the service.
+    data_service_max_outstanding_requests: Maximum number of outstanding
+      concurrent requests to the data service. This effectively controls the
+      number of batches that are cached on the trainer from the data service at
+      any one point in time (important as sometimes this being too high or
+      autotuned can cause OOMs).
+    data_service_batch_size: The batch size to use for the TF data service.
+      Large batch sizes result in OOMs and proto serialization errors. The proto
+      size limit is 2GB so the entire batch must fit in this limit. This is
+      optional and can be set to None if we just want to use the default batch
+      size for the data service too.
     **kwargs: Additional arguments passed to dataset loading functions.
+
   Returns:
     Prefetched tf.data.Dataset object of the training or evaluation split.
     Number of train examples in a single epoch if train=True, or the number of
@@ -190,13 +206,14 @@ def _get_single_ds(
     # data should already be sharded by host process_id.
     data = ds_module.get_dataset(
         dataset=dataset, split=split, shuffle_files=train,
-        data_dir=data_dir, **kwargs)
+        data_dir=data_dir, keep_keys=keep_keys, **kwargs)
   else:
     data, _ = get_dataset_tfds(
         dataset=dataset, split=split, shuffle_files=train,
         data_dir=data_dir, skip_decode=skip_decode,
         download_and_prepare=download_and_prepare,
-        interleave_cycle_length=interleave_cycle_length)
+        interleave_cycle_length=interleave_cycle_length,
+        keep_keys=keep_keys)
 
   if not callable(preprocess_fn):
     preprocess_fn = pp_builder.get_preprocess_fn(preprocess_fn, log_steps=True)
@@ -216,12 +233,6 @@ def _get_single_ds(
   if filter_fn:
     data = data.filter(filter_fn)
   if cache_raw:
-    # Only keep a subset of the data. This significanlty reduces the memory
-    # usage when caching a raw dataset that containes more keys than those being
-    # used during model training.
-    if cache_raw_keys:
-      fn = lambda x: {k: v for k, v in x.items() if k in cache_raw_keys}
-      data = data.map(fn)
     data = data.cache()
   if train:  # Reuse new API from big_vision.
     if filter_fn:
@@ -246,10 +257,16 @@ def _get_single_ds(
       if filter_final_fn:
         data = data.filter(filter_final_fn)
     data = data.shuffle(shuffle_buffer_size) if shuffle_buffer_size else data
-    if batch_size > 0:
+
+    # If the batch_size is large, then protos serialized during the tf data
+    # service can exceed the 2GB proto size limit. To avoid this we can reduce
+    # the batch size temporarily over here.
+    intermediate_batch_size = data_service_batch_size or batch_size
+
+    if intermediate_batch_size > 0:
       # Drop remainder makes shape fully static, so we can later use it if
       # needed.
-      data = data.batch(batch_size, drop_remainder=True)
+      data = data.batch(intermediate_batch_size, drop_remainder=True)
 
     # Preprocessing applied on entire batches, e.g. reshaping or cut-mix.
     data = data.map(batch_preprocess_fn, num_parallel_calls)
@@ -265,8 +282,11 @@ def _get_single_ds(
               service=data_service_address,
               job_name=f"train_data/{wid}/{dataset}/{split}".replace(
                   ":", "_").replace(".", "_"),
+              max_outstanding_requests=data_service_max_outstanding_requests,
           )
       )
+      if intermediate_batch_size != batch_size:
+        data = data.unbatch().batch(batch_size, drop_remainder=True)
     return data.prefetch(prefetch), num_examples
   else:
     # Filtering eval data can break down the logic and should be avoided.
@@ -389,7 +409,8 @@ def _get_mixture_ds(
 
 
 def get_data(
-    dataset: str | Sequence[str], **kwargs) -> tuple[tf.data.Dataset, int]:
+    dataset: str | Sequence[str] | None, **kwargs
+) -> tuple[tf.data.Dataset, int]:
   """Returns dataset with the number of train examples or evaluation steps.
 
   Args:
@@ -400,7 +421,7 @@ def get_data(
     Number of train examples in a single epoch if train=True, or the number of
       evaluation steps with the given batch size if train=False.
   """
-  if isinstance(dataset, str):
+  if dataset is None or isinstance(dataset, str):
     return _get_single_ds(dataset, **kwargs)
 
   return _get_mixture_ds(dataset, **kwargs)
@@ -444,6 +465,7 @@ def get_dataset_tfds(
     shuffle_files: bool = True,
     data_dir: str | None = None,
     skip_decode: Sequence[str] = ("image",),
+    keep_keys: Sequence[str] | None = None,
     download_and_prepare: bool = False,
     interleave_cycle_length: int | None = None,
 ) -> tuple[tf.data.Dataset, tfds.core.DatasetBuilder]:
@@ -452,10 +474,15 @@ def get_dataset_tfds(
   if download_and_prepare:
     builder.download_and_prepare()
   split = tfds.even_splits(split, jax.process_count())[jax.process_index()]
-  skip_decoders = {
+  decoders = {
       f: tfds.decode.SkipDecoding()
       for f in skip_decode if f in builder.info.features
   }
+  if keep_keys:
+    decoders = tfds.decode.PartialDecoding(
+        {f: True for f in keep_keys if f in builder.info.features},
+        {f: decoder for f, decoder in decoders.items() if f in keep_keys},
+    )
   read_config = tfds.ReadConfig(
       skip_prefetch=True,  # We prefetch after pipeline.
       try_autocache=False,  # We control this, esp. for few-shot.
@@ -470,7 +497,7 @@ def get_dataset_tfds(
       split=split,
       shuffle_files=shuffle_files,
       read_config=read_config,
-      decoders=skip_decoders), builder
+      decoders=decoders), builder
 
 
 # Forked from third_party/py/big_vision/input_pipeline.py

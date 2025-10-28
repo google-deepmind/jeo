@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Random deterministic preprocessing ops.
 
-These functions were inspired by preprocesing in the big_vision UViM project.
+These functions were inspired by preprocessing in the big_vision UViM project.
 """
 
 import einops
@@ -31,6 +31,20 @@ def get_randu(key: str):
 
   def _randu(data):
     data[key] = tf.random.uniform([])
+    return data
+
+  return _randu
+
+
+@Registry.register("preprocess_ops.randint", replace=True)
+def get_randint(key: str, minval: int = 0, maxval: int = 1<<31, step: int = 1):
+  """Creates a random uniform integer [minval, maxval) in `key`."""
+
+  def _randu(data):
+    data[key] = tf.random.uniform([], minval=minval, maxval=maxval,
+                                  dtype=tf.int32)
+    if step > 1:
+      data[key] = data[key] // step * step
     return data
 
   return _randu
@@ -240,5 +254,27 @@ def get_det_noise(
       # [0, 1] -> [noise_min, noise_max]
       noise = (noise_max - noise_min) * data[randkey] + noise_min
     return (image * noise) if multiplicative else (image + noise)
+
+  return _pp
+
+
+@Registry.register("preprocess_ops.det_select_channels", replace=True)
+@pp_utils.InKeyOutKey(with_data=True)
+def get_det_select_channels(
+    randkey="start_index_key",
+    num_channels: int = 1,
+    axis: int = 0,
+):
+  """Deterministically selects random channels.
+
+  Args:
+    randkey: Key for the random start index feature.
+    num_channels: Number of channels to select starting from `randkey` index.
+    axis: Axis to select the channels from.
+  """
+
+  def _pp(tensor, data):
+    inds = tf.range(data[randkey], data[randkey] + num_channels)
+    return tf.gather(tensor, inds, axis=axis)
 
   return _pp

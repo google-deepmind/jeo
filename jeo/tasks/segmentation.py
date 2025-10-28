@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,9 @@
 # limitations under the License.
 
 """Segmentation tasks."""
+
+from collections.abc import Sequence
+
 import jax
 import jax.numpy as jnp
 from jeo.tasks import task_builder
@@ -30,6 +33,7 @@ class SegmentationTask(task_builder.TaskBase):
       weights_key=None,
       mask_key=None,
       model_aux_metrics=(),
+      discrete_infer_probs=True,
       **kwargs,
   ):
     super().__init__(loss_name, **kwargs)
@@ -38,6 +42,7 @@ class SegmentationTask(task_builder.TaskBase):
     self.weights_key = weights_key
     self.mask_key = mask_key if mask_key is not None else f"{labels_key}_mask"
     self.model_aux_metrics = model_aux_metrics
+    self.discrete_infer_probs = discrete_infer_probs
 
   def get_loss_and_aux(self, model_outputs, *batches, train=False):
     """Returns loss and aux dict."""
@@ -48,8 +53,13 @@ class SegmentationTask(task_builder.TaskBase):
     labels = batch[self.labels_key]  # (B,H,W,1) or (B,H,W)
     if labels.shape[-1] == 1:
       labels = labels[..., -1]  # (B,H,W)
-    weights = _get_weights(logits, labels, self.exclude_background_class,
-                           batch=batch, weights_key=self.weights_key)
+    weights = _get_weights(
+        logits,
+        labels,
+        self.exclude_background_class,
+        batch=batch,
+        weights_key=self.weights_key,
+    )
 
     # Exclude non-valid pixels.
     if self.mask_key in batch.keys():
@@ -58,8 +68,9 @@ class SegmentationTask(task_builder.TaskBase):
         valid_mask = jnp.squeeze(valid_mask, -1)
       weights *= valid_mask
 
-    loss = self.loss_fn(logits=logits, labels=labels, reduction=train,
-                        weights=weights)
+    loss = self.loss_fn(
+        logits=logits, labels=labels, reduction=train, weights=weights
+    )
     aux = {}
     if isinstance(loss, tuple):
       assert len(loss) == 2 and isinstance(loss[1], dict)
@@ -69,13 +80,34 @@ class SegmentationTask(task_builder.TaskBase):
 
     return loss, aux
 
+  def get_infer_postprocessing_fn(self):
+    """Returns a function to postprocess model outputs for inference."""
+
+    def fn(model_outputs: jnp.ndarray | Sequence[jnp.ndarray]):
+      if not isinstance(model_outputs, (list, tuple)):
+        model_outputs = (model_outputs,)
+      logits, _ = model_outputs  # pytype: disable=bad-unpacking
+      predictions = jnp.argmax(logits, axis=-1)
+      probs = jax.nn.softmax(logits)
+      if self.discrete_infer_probs:
+        probs = (250 * probs).astype(jnp.uint8)
+      if self.exclude_background_class and probs.shape[-1] == 3:
+        probs = probs[..., -1:]
+      return {"predictions": predictions, "probs": probs}
+
+    return fn
+
 
 class RegressionSegmentationTask(task_builder.TaskBase):
   """Regression segmentation task."""
 
-  def __init__(self, loss_name="l2_loss", labels_key="labels",
-               mask_key="valid_label_mask",
-               **kwargs):
+  def __init__(
+      self,
+      loss_name="l2_loss",
+      labels_key="labels",
+      mask_key="valid_label_mask",
+      **kwargs,
+  ):
     super().__init__(loss_name, **kwargs)
     self.labels_key = labels_key
     self.mask_key = mask_key
@@ -97,20 +129,36 @@ class RegressionSegmentationTask(task_builder.TaskBase):
       if weights.shape[-1] == 1:
         weights = jnp.squeeze(weights, -1)
 
-    loss = self.loss_fn(logits=logits, labels=labels, reduction=train,
-                        weights=weights)
+    loss = self.loss_fn(
+        logits=logits, labels=labels, reduction=train, weights=weights
+    )
     aux = {}
     if isinstance(loss, tuple):
       assert len(loss) == 2 and isinstance(loss[1], dict)
       loss, aux = loss
     return loss, aux
 
+  def get_infer_postprocessing_fn(self):
+
+    def fn(model_outputs: jnp.ndarray | Sequence[jnp.ndarray]):
+      if not isinstance(model_outputs, (list, tuple)):
+        model_outputs = (model_outputs,)
+      preds, _ = model_outputs  # pytype: disable=bad-unpacking
+      return {"preds": preds}
+
+    return fn
+
 
 class PanopticSegmentationTask(task_builder.TaskBase):
   """Panoptic segmentation task."""
 
-  def __init__(self, loss_name="generalized_softmax_xent",
-               exclude_background_class=False, min_fraction=0.0, **kwargs):
+  def __init__(
+      self,
+      loss_name="generalized_softmax_xent",
+      exclude_background_class=False,
+      min_fraction=0.0,
+      **kwargs,
+  ):
     super().__init__(loss_name, **kwargs)
     self.exclude_background_class = exclude_background_class
     self.min_fraction = min_fraction
@@ -121,8 +169,10 @@ class PanopticSegmentationTask(task_builder.TaskBase):
     if not isinstance(model_outputs, (list, tuple)):
       model_outputs = (model_outputs,)
     logits = self._panoptic_predictions_from_logits(model_outputs[0])
-    labels_dict = dict(semantics=batch["segmentation_mask"],  # (B,H,W,1)
-                       instances=batch["instances"])  # (B,H,W,1)
+    labels_dict = dict(
+        semantics=batch["segmentation_mask"],  # (B,H,W,1)
+        instances=batch["instances"],
+    )  # (B,H,W,1)
     aux = {}
     for key, labels in labels_dict.items():
       if labels.shape[-1] == 1:
@@ -130,7 +180,8 @@ class PanopticSegmentationTask(task_builder.TaskBase):
       weights = _get_weights(logits[key], labels, self.exclude_background_class)
       # NOTE: The reduction is applied later on all aux variables when training.
       aux[f"loss_{key}"] = self.loss_fn(
-          logits=logits[key], labels=labels, weights=weights, reduction=False)
+          logits=logits[key], labels=labels, weights=weights, reduction=False
+      )
     if train:
       aux = jax.tree.map(jnp.mean, aux)
     loss = aux["loss_semantics"] + aux["loss_instances"]
@@ -139,7 +190,7 @@ class PanopticSegmentationTask(task_builder.TaskBase):
   def _panoptic_predictions_from_logits(self, logits):
     """Make panoptic prediction from logits."""
     # Based on third_party/py/big_vision/trainers/proj/uvim/panoptic_task.py
-    semantics, instances = logits["sematics"], logits["instances"]
+    semantics, instances = logits["semantics"], logits["instances"]
     ins = jnp.argmax(instances, axis=-1)
     # Note: Make sure each instance has all pixels annotated with same label.
     # Otherwise they are further split into more instances and greatly affect
@@ -148,8 +199,9 @@ class PanopticSegmentationTask(task_builder.TaskBase):
     label = jnp.argmax(jnp.einsum("bhwk,bhwn->bnk", semantics, masks), axis=-1)
     sem = jnp.einsum("bhwn,bn->bhw", masks, label)
     # Filter out small objects
-    fraction = (jnp.sum(masks, axis=(1, 2), keepdims=True)
-                / np.prod(ins.shape[1:3]))
+    fraction = jnp.sum(masks, axis=(1, 2), keepdims=True) / np.prod(
+        ins.shape[1:3]
+    )
     mask_big = (fraction > self.min_fraction).astype("int32")
     mask_big_spatial = jnp.sum(masks * mask_big, axis=-1, keepdims=False) > 0
     sem = sem * mask_big_spatial.astype("int32")
@@ -157,8 +209,9 @@ class PanopticSegmentationTask(task_builder.TaskBase):
     return {"semantics": sem, "instances": ins}
 
 
-def _get_weights(logits, labels, exclude_background: bool, batch=None,
-                 weights_key=None):
+def _get_weights(
+    logits, labels, exclude_background: bool, batch=None, weights_key=None
+):
   """Returns weights for the loss."""
   if weights_key:
     if weights_key not in batch.keys():

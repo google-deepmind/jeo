@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Utils and common structures across various models."""
+from collections.abc import Mapping, MutableMapping
 from typing import Any
 import ml_collections as mlc
 
@@ -65,7 +66,8 @@ def parse_arg(arg, lazy=False, **spec):
       the type is auto-extracted in dependence of most complex possible type.
     **spec: the name and default values of the expected options.
       If the value is a tuple, the value's first element is the default value,
-      and the second element is a function called to convert the string.
+      and the second element is a function called to convert the string or a
+      sequence separator string.
       Otherwise the type is automatically extracted from the default value.
 
   Returns:
@@ -118,10 +120,18 @@ def get_type_with_default(v):
     return (v, strict_bool)
   # If already a (default, type) tuple, use that.
   if isinstance(v, (tuple, list)):
-    assert len(v) == 2 and isinstance(v[1], type), (
-        "List or tuple types are currently not supported because we use `,` as"
-        " dumb delimiter. Contributions (probably using ast) welcome. You can"
-        " unblock by using a string with eval(s.replace(';', ',')) or similar")
+    assert len(v) == 2, (
+        "To have a list or tuple argument, spec should be a two-element tuple. "
+        "First element is the value, second is a type, function, or sequence "
+        "separator."
+    )
+    if isinstance(v[1], str):
+      # Second element is interpreted as a separator for a sequence.
+      # The type of the sequence is the type of the first default element.
+      val, sep = v
+      if not isinstance(val, (tuple, list)):
+        val = (val,)
+      return val, lambda x: tuple(type(val[0])(y) for y in x.split(sep))
     return (v[0], v[1])
   # Otherwise, derive the type from the default value.
   return (v, type(v))
@@ -209,3 +219,56 @@ def get_linear_probe_imagenet(runlocal=False, **kw):
       pp_train=pp_train))
 
   return config
+
+
+def get_ds(arg, ds=None, v=None, parent=None, default_parent="forest_typology"):
+  """Constructs full dataset name.
+
+  Args:
+    arg: ConfigDict with `ds` and optionally `ds_suffix` and `parent_dir` keys.
+    ds: Dataset name (if not specified, uses the one from arg).
+    v: Version of the dataset, of the form "samples.sources.labels". Can use
+      wildcard "*" to use the version from the training dataset.
+    parent: Parent directory/name of the dataset. If not specified, uses
+      `parent_dir` from arg if specified, or the default_parent otherwise.
+    default_parent: Default parent directory of the dataset (lowest priority).
+  Returns:
+    Full dataset name of the form: {parent}/{ds}{ds_suffix}:{version}.
+  """
+  ds = ds or arg.ds
+  ds = ds.split("#")[0]
+  if ":" in ds:
+    ds, version = ds.split(":")
+  else:
+    _, version = arg.ds.split("#")[0].split(":")
+  if v is not None:
+    samples_v, sources_v, labels_v = v.split(".")
+    samples_v = samples_v if samples_v != "*" else version.split(".")[0]
+    sources_v = sources_v if sources_v != "*" else version.split(".")[1]
+    labels_v = labels_v if labels_v != "*" else version.split(".")[2]
+    version = f"{samples_v}.{sources_v}.{labels_v}"
+  parent = parent or arg.get("parent_dir", default_parent)
+  return f"{parent}/{ds}{arg.get('ds_suffix', '')}:{version}"
+
+
+def update_config(cfg: MutableMapping[str, Any], updates: Mapping[str, Any]):
+  """Updates a nested config with a flat dictionary of updates.
+
+  Args:
+    cfg: The config to update. Can be a dict or a ConfigDict.
+    updates: A dictionary of updates to apply to the cfg. The keys are
+      dot-separated paths to the leaves to update, and the values are the
+      update values.
+  """
+  for k, v in updates.items():
+    target = cfg
+    levels = k.split(".")
+    for level in levels[:-1]:
+      if level not in target:
+        target[level] = {}
+      target = target[level]
+    try:
+      target[levels[-1]] = v
+    except TypeError as e:
+      # Pay attention to proper types if updating a ConfigDict.
+      raise e

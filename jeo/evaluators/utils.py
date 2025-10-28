@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,9 @@
 import numpy as np
 
 
+ALL_PER_CLASS_METRICS = frozenset(
+    ("f1", "prec", "recall", "iou", "miou", "acc", "fraction")
+)
 DEFAULT_PER_CLASS_METRICS = ("f1", "prec", "recall")
 
 
@@ -24,7 +27,13 @@ def get_per_class_metrics(cm, label_map, metrics=DEFAULT_PER_CLASS_METRICS,
   """Yields per class metrics."""
   if isinstance(metrics, bool):
     metrics = DEFAULT_PER_CLASS_METRICS
-  assert not (set(metrics) - {"f1", "prec", "recall", "iou", "miou", "acc"})
+  if isinstance(metrics, str):
+    metrics = (metrics,)
+  if unknown_metrics := set(metrics) - ALL_PER_CLASS_METRICS:
+    raise ValueError(
+        f"Unsupported metrics found: {unknown_metrics}. Only"
+        f" {ALL_PER_CLASS_METRICS} are supported."
+    )
   if not label_map:
     label_map = [f"cls{i}" for i in range(cm.shape[0])]
 
@@ -56,6 +65,8 @@ def get_per_class_metrics(cm, label_map, metrics=DEFAULT_PER_CLASS_METRICS,
       yield f"per_class/{i:02}_{class_name}_recall", recall[i]
     if "acc" in metrics:
       yield f"per_class/{i:02}_{class_name}_acc", acc_per_class[i]
+    if "fraction" in metrics:
+      yield f"per_class/{i:02}_{class_name}_fraction", true[i] / np.sum(cm)
 
 
 def get_stratified_metrics(cm, strata_weights, class_reductions=None):
@@ -92,6 +103,8 @@ def get_stratified_metrics(cm, strata_weights, class_reductions=None):
   overall_correct = 0
   se = 0
   for strata in range(cm.shape[0]):
+    if strata_weights[strata] == 0:
+      continue
     strata_correct = np.diag(cm[strata]).sum()
     strata_total = np.sum(cm[strata])
     yh = strata_correct / strata_total
@@ -132,6 +145,8 @@ def get_stratified_metrics(cm, strata_weights, class_reductions=None):
     r_ua = r_nom / r_ua_denom
     r_pa = r_nom / r_pa_denom
     for strata in range(cm.shape[0]):
+      if strata_weights[strata] == 0:
+        continue
       strata_correct = cm[strata, class_of_interest, class_of_interest]
       num_reference = np.sum(cm[strata, :, class_of_interest])
       strata_total = np.sum(cm[strata])

@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,20 +15,72 @@
 """Metrics (currently heavily based on Hubways CLU metrics)."""
 from collections.abc import Callable, Sequence
 import functools
+import inspect
 
 from absl import logging
 from clu import metrics as clu_metrics_builder
+import clu.values
 import flax
 import jax.numpy as jnp
 from jeo.metrics import clu_metrics
 import numpy as np
 
-Collection = clu_metrics_builder.Collection
+
 DataDict = dict[str, np.ndarray | jnp.ndarray]
-SingleFn = Callable[[jnp.ndarray, DataDict, DataDict, DataDict],
-                    Collection]
-GatherFn = Callable[[jnp.ndarray, DataDict, DataDict, DataDict, str],
-                    Collection]
+SingleFn = Callable[
+    [jnp.ndarray, DataDict, DataDict, DataDict], "ExpandedCollection"
+]
+GatherFn = Callable[
+    [jnp.ndarray, DataDict, DataDict, DataDict, str], "ExpandedCollection"
+]
+
+
+@flax.struct.dataclass
+class ExpandedCollection(clu_metrics_builder.Collection):
+  """An expanded CLU metrics collection that supports nested Collections."""
+
+  def _check_reduction_counter_ndim(
+      self, reduction_counter: clu_metrics_builder._ReductionCounter
+  ):
+    ndim = reduction_counter.value.ndim
+    if ndim != 0:
+      raise ValueError(
+          f"Collection is still replicated (ndim={ndim}). Maybe you forgot to "
+          "call a flax.jax_utils.unreplicate() or a Collections.reduce()?"
+      )
+
+  @classmethod
+  def from_model_output(cls, **kwargs):
+    """We need this to be able to get the collection to imitate a metric."""
+    return cls._from_model_output(**kwargs)
+
+  def compute(self) -> dict[str, jnp.ndarray]:
+    """Returns a dictionary mapping metric field name to `Metric.compute()`."""
+    self._check_reduction_counter_ndim(self._reduction_counter)
+    results = {}
+    for metric_name, metric in vars(self).items():
+      if metric_name != "_reduction_counter":
+        metric_results = metric.compute()
+        if isinstance(metric_results, dict):
+          for k, v in metric_results.items():
+            results[f"{metric_name}/{k}"] = v
+        else:
+          results[metric_name] = metric_results
+    return results
+
+  def compute_values(self) -> dict[str, clu.values.Value]:
+    """Computes metrics and returns them as clu.values.Value."""
+    self._check_reduction_counter_ndim(self._reduction_counter)
+    results = {}
+    for metric_name, metric in vars(self).items():
+      if metric_name != "_reduction_counter":
+        metric_results = metric.compute_value()
+        if isinstance(metric_results, dict):
+          for k, v in metric_results.items():
+            results[f"{metric_name}/{k}"] = v
+        else:
+          results[metric_name] = metric_results
+    return results
 
 
 class MetricsCollection:
@@ -59,7 +111,7 @@ class MetricsCollection:
   def has_state(self):
     return self._state is not None
 
-  def update_state(self, metrics_update: Collection):
+  def update_state(self, metrics_update: ExpandedCollection):
     if self._state is None:
       self._state = metrics_update
     else:
@@ -72,26 +124,43 @@ class MetricsCollection:
     return self._state.compute()
 
 
-def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
-                    class_name: str = "Metrics") -> type[Collection]:
+def get_metrics_cls(
+    metrics_list: Sequence[str | tuple[str, str | clu_metrics_builder.Metric]],
+    class_name: str = "Metrics",
+) -> type[ExpandedCollection]:
   """Returns Jax-serializable metrics collection class.
 
   Based on CLU metrics module ((internal link)).
 
   Args:
-    metrics_list: A list of metric names. One can provide as well a tuple to
-      use not registered names (name, registered_name), so that the unregistered
-      name is used for a registered metric.
+    metrics_list: A list of metrics. One can provide:
+      - a single string to use a registered metric.
+      - a tuple (name, registered_name) to use a registered metric with a
+        different name.
+      - a tuple (name, metric_class) to use a custom metric class.
     class_name: A custom name for the class. It will be subclassed from
       clu.metrics.Collection.
   Returns:
     New metrics collection class type.
   """
   metrics_dict = {}
-  for name in metrics_list:
-    if isinstance(name, str):
-      name = (name, name)
-    name, reg_name = name
+  for metric_config in metrics_list:
+    if isinstance(metric_config, str):
+      name = metric_config
+      reg_name = metric_config
+    else:
+      name, metric_or_reg_name = metric_config
+      if inspect.isclass(metric_or_reg_name) and (
+          issubclass(metric_or_reg_name, clu_metrics_builder.Metric)
+          or issubclass(metric_or_reg_name, clu_metrics_builder.Collection)
+      ):
+        metrics_dict[name] = metric_or_reg_name
+        continue
+      elif isinstance(metric_or_reg_name, str):
+        reg_name = metric_or_reg_name
+      else:
+        raise ValueError("Invalid metric configuration.")
+
     reg_name = reg_name.lower()
     # Unfortunately, special characters cannot be inside of metrics names.
     name = name.replace(".", "_").replace("@", "_at_")
@@ -106,7 +175,8 @@ def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
     elif reg_name.endswith("_loss"):  # Supporting additional losses.
       metrics_dict[name] = clu_metrics_builder.Average.from_output(name)
     elif reg_name.endswith("_avg"):  # Generic average-based metrics.
-      metrics_dict[name] = clu_metrics_builder.Average.from_output(name)
+      metrics_dict[name] = clu_metrics_builder.Average.from_output(
+          name.removesuffix("_avg"))
     elif reg_name in ["learning_rate"]:
       metrics_dict[name] = clu_metrics_builder.LastValue.from_output(name)
     elif reg_name in ["aucpr", "map"]:  # Same as mAP (Mean Average Precision).
@@ -132,8 +202,12 @@ def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
       )
     elif reg_name in ["mae", "umad", "mad"]:
       metrics_dict[name] = clu_metrics.MAE
+    elif reg_name in ["r2", "r2_score", "r2score"]:
+      metrics_dict[name] = clu_metrics.R2Score
+    elif reg_name == "stratified_regression_confusion_matrix":
+      metrics_dict[name] = clu_metrics.StratifiedRegressionConfusionMatrix
     elif reg_name.startswith("stratified_"):
-      _, metric_name = reg_name.split("_")
+      metric_name = reg_name.removeprefix("stratified_")
       metrics_dict[name] = clu_metrics.get_stratified_avg_metric(metric_name)
     elif reg_name == "mse":
       metrics_dict[name] = clu_metrics.MSE
@@ -163,9 +237,14 @@ def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
       metrics_dict[name] = clu_metrics.MIoU
     elif reg_name == "confusion_matrix":  # non-scalar, excluded from XM.
       metrics_dict[name] = clu_metrics.ConfusionMatrix
+    elif reg_name == "confusion_matrix_3d":
+      metrics_dict[name] = clu_metrics.ConfusionMatrix3D
     elif reg_name == "strata_binary_confusion_matrix":
       # non-scalar, excluded from XM.
       metrics_dict[name] = clu_metrics.PerStrataBinaryConfusionMatrix
+    elif reg_name == "strata_confusion_matrix":
+      # non-scalar, excluded from XM.
+      metrics_dict[name] = clu_metrics.PerStrataConfusionMatrix
     elif reg_name == "min_logvar":
       metrics_dict[name] = clu_metrics.MinLogvar
     elif reg_name == "max_logvar":
@@ -180,10 +259,15 @@ def get_metrics_cls(metrics_list: Sequence[str | tuple[str, str]],
 
 
 def create_metrics_collection_cls(
-    class_name: str, metrics_dict: dict[str, clu_metrics_builder.Metric]
-) -> type[Collection]:
+    class_name: str,
+    metrics_dict: dict[
+        str, clu_metrics_builder.Metric | type[ExpandedCollection]
+    ],
+) -> type[ExpandedCollection]:
   """Creates new metrics collection class."""
-  cls = type(class_name, (Collection,), {"__annotations__": metrics_dict})
+  cls = type(
+      class_name, (ExpandedCollection,), {"__annotations__": metrics_dict}
+  )
   cls = flax.struct.dataclass(cls)  # To enable Jax tree serialization.
   return cls
 
@@ -207,6 +291,7 @@ def _get_metrics_inputs(
       "predictions",
       "log_variances",
       "pred_uncertainty",
+      "logit_samples",
   ]
   for key in potential_model_outputs:
     if key in outputs:
@@ -219,7 +304,7 @@ def _get_metrics_inputs(
       assert "labels" not in metrics_inputs
       metrics_inputs["labels"] = inputs[key]
 
-  potential_model_inputs = ["label_weights", "mask", "corrupt_pixels"]
+  potential_model_inputs = ["label_weights", "mask", "noisy_pixels"]
   for key in potential_model_inputs:
     if key in inputs:
       metrics_inputs[key] = inputs[key]
@@ -227,12 +312,12 @@ def _get_metrics_inputs(
 
 
 def get_single_update(
-    metrics_cls: type[Collection],
+    metrics_cls: type[ExpandedCollection],
     loss: jnp.ndarray,
     outputs: DataDict,
     inputs: DataDict,
     opt_params: DataDict,
-) -> Collection:
+) -> ExpandedCollection:
   """Constructs metrics update for a single (unreplicated by pmap) output."""
   metrics_inputs = _get_metrics_inputs(
       loss=loss, outputs=outputs, inputs=inputs, opt_params=opt_params
@@ -241,13 +326,13 @@ def get_single_update(
 
 
 def get_gathered_update(
-    metrics_cls: type[Collection],
+    metrics_cls: type[ExpandedCollection],
     loss: jnp.ndarray,
     outputs: DataDict,
     inputs: DataDict,
     opt_params: DataDict,
     axis_name: str = "batch",
-) -> Collection:
+) -> ExpandedCollection:
   """Constructs metrics update to be used inside pmapped functions."""
   metrics_inputs = _get_metrics_inputs(
       loss=loss, outputs=outputs, inputs=inputs, opt_params=opt_params

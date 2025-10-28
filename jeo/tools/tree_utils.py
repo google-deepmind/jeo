@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import re
 from absl import logging
 import flax
 import jax
+import jax.numpy as jnp
 import ml_collections as mlc
 import numpy as np
 
@@ -301,7 +302,7 @@ def tree_broadcast(prefix, target):
 
   Args:
     prefix: prefix pytree.
-    target: boradcast target for a prefix tree.
+    target: broadcast target for a prefix tree.
 
   Returns:
     prefix tree broadcasted to a target tree.
@@ -395,11 +396,7 @@ def merge_params(loaded, inited, dont_load=(), match_dtype=False):
 
   if not_in_loaded or not_in_inited:
     raise ValueError(
-        pp("Params in checkpoint", loaded_flat.keys())
-        + "\n"
-        + pp("Params in model (code)", inited_flat.keys())
-        + "\n"
-        + pp(
+        pp(
             "Params in model (code) but not in checkpoint and not"
             " `dont_load`ed",
             not_in_loaded,
@@ -412,6 +409,11 @@ def merge_params(loaded, inited, dont_load=(), match_dtype=False):
             not_in_inited,
             indent=" + ",
         )
+        + "\n"
+        + pp("Params in checkpoint", loaded_flat.keys())
+        + "\n"
+        + pp("Params in model (code)", inited_flat.keys())
+        + "\n"
     )  # Special indent for tests.
 
   return recover_tree(merged.keys(), merged.values())
@@ -461,3 +463,69 @@ def split_frozen(masks, scheds):
       (mask, sched) for mask, sched in zip(masks, scheds) if sched is not None
   ))
   return frozen_mask, masks, scheds
+
+
+def _is_numeric_key(k):
+  """Checks if a string is composed of digits."""
+  return isinstance(k, str) and k.isdigit()
+
+
+# TODO: These two functions are very similar to pytree_paths_flatten
+# and pytree_paths_split in inspect.py. We should consider unifying them (and
+# the resulting functions should be in this module).
+def flatten_with_paths(tree, separator="/"):
+  """Flattens a tree of dicts/lists/tuples to a dict of path->array."""
+
+  def _items(subtree, path_parts):
+    if isinstance(subtree, dict):
+      for key, value in sorted(subtree.items()):
+        yield from _items(value, path_parts + [str(key)])
+    elif isinstance(subtree, (list, tuple)):
+      for i, value in enumerate(subtree):
+        yield from _items(value, path_parts + [str(i)])
+    elif isinstance(subtree, (np.ndarray, jnp.ndarray)):
+      yield separator.join(path_parts), subtree
+    else:
+      raise ValueError(
+          f"Unsupported type in tree: {type(subtree)} at path "
+          f"{separator.join(path_parts)}"
+      )
+
+  return dict(_items(tree, []))
+
+
+def unflatten_from_paths(leaves, separator="/"):
+  """Unflattens a dict of path->array to a tree of dicts/tuples."""
+
+  # Unflatten the leaves first into a tree of dicts.
+  root = {}
+  for path, leaf in leaves.items():
+    parts = path.split(separator)
+    node = root
+    for part in parts[:-1]:
+      if part not in node:
+        node[part] = {}
+      node = node[part]
+      assert isinstance(node, dict), f"Path conflict in unflattening: {path}"
+    node[parts[-1]] = leaf
+
+  def _swap_dense_numbered_to_tuple(node):
+    if not isinstance(node, dict):
+      return node
+
+    keys = node.keys()
+    # Check if all keys are numeric and form a dense range [0, N-1]
+    if all(_is_numeric_key(k) for k in keys):
+      int_keys = sorted([int(k) for k in keys])
+      if int_keys == list(range(len(int_keys))):
+        # If so, reconstruct as a tuple.
+        return tuple(
+            _swap_dense_numbered_to_tuple(node[str(i)]) for i in int_keys
+        )
+
+    # Otherwise, reconstruct as a dict.
+    return {
+        k: _swap_dense_numbered_to_tuple(v) for k, v in sorted(node.items())
+    }
+
+  return _swap_dense_numbered_to_tuple(root)

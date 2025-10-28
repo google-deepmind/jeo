@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,8 +13,7 @@
 # limitations under the License.
 
 """Classification tasks."""
-
-import functools
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -24,9 +23,14 @@ from jeo.tasks import task_builder
 class ClassificationTask(task_builder.TaskBase):
   """Classification task."""
 
-  def __init__(self, weights_key=None, **kwargs):
+  def __init__(
+      self,
+      weights_key=None,
+      exclude_background_class=False,
+      **kwargs):
     super().__init__(**kwargs)
     self.weights_key = weights_key
+    self.exclude_background_class = exclude_background_class
 
   def get_loss_and_aux(self, model_outputs, *batches, train=False):
     """Returns loss and aux dict."""
@@ -41,10 +45,10 @@ class ClassificationTask(task_builder.TaskBase):
     # NOTE: that acc is not weighted, only loss is.
     aux = {"acc": jnp.take_along_axis(
         batch["labels"], pred[:, None], axis=1)[:, 0]}
-    loss_fn = self.loss_fn
-    if self.weights_key:
-      loss_fn = functools.partial(loss_fn, weights=batch[self.weights_key])
-    loss = loss_fn(logits=logits, labels=batch["labels"], reduction=train)
+    weights = _get_weights(batch, self.exclude_background_class,
+                           weights_key=self.weights_key)
+    loss = self.loss_fn(logits=logits, labels=batch["labels"], reduction=train,
+                        weights=weights)
     if train:
       aux = jax.tree.map(jnp.mean, aux)
     return loss, aux
@@ -74,6 +78,19 @@ class MultiHeadClassificationTask(task_builder.TaskBase):
       aux = jax.tree.map(jnp.mean, aux)
     return loss, aux
 
+  def get_infer_postprocessing_fn(self):
+    """Returns a function to postprocess model outputs for inference."""
+
+    def fn(model_outputs):
+      if not isinstance(model_outputs, (list, tuple)):
+        model_outputs = (model_outputs,)
+      logits, _ = model_outputs  # pytype: disable=bad-unpacking
+      predictions = jnp.argmax(logits, axis=-1)
+      probs = (250 * jax.nn.softmax(logits)).astype(jnp.uint8)
+      return {"preds": predictions, "probs": probs}
+
+    return fn
+
 
 class MultitaskClassificationTask(task_builder.TaskBase):
   """Multitask classification task."""
@@ -102,3 +119,22 @@ class MultitaskClassificationTask(task_builder.TaskBase):
     if train:
       aux = jax.tree.map(jnp.mean, aux)
     return loss, aux
+
+
+def _get_weights(
+    batch: dict[str, Any],
+    exclude_background_class: bool,
+    weights_key: str | None) -> jnp.ndarray | None:
+  """Returns weights for loss."""
+  weights = None
+  if weights_key:
+    if weights_key not in batch.keys():
+      raise ValueError(f"Weights key {weights_key} not in batch.")
+    weights = batch[weights_key]
+  if exclude_background_class:
+    labels = batch["labels"].argmax(-1)  # Get class from onehot encoded.
+    if weights is None:
+      weights = (labels > 0).astype("float32")
+    else:
+      weights = weights * (labels > 0).astype("float32")
+  return weights

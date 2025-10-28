@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ class Encoder1DBlock(nn.Module):
   num_heads: int = 12
   dropout: float = 0.0
   normalize_qk: bool = False
+  qkv_features: int | None = None  # Defaults to input dim, shared across heads.
 
   @nn.compact
   def __call__(self, x, deterministic=True, mask=None):
@@ -67,6 +68,7 @@ class Encoder1DBlock(nn.Module):
         num_heads=self.num_heads,
         kernel_init=nn.initializers.xavier_uniform(),
         normalize_qk=self.normalize_qk,
+        qkv_features=self.qkv_features,
         deterministic=deterministic,
     )(y, y, mask=mask)
     y = nn.Dropout(rate=self.dropout)(y, deterministic)
@@ -88,6 +90,7 @@ class Encoder(nn.Module):
   num_heads: int = 12
   dropout: float = 0.0
   normalize_qk: bool = False
+  qkv_features: int | None = None  # Defaults to input dim, shared across heads.
 
   @nn.compact
   def __call__(self, x, deterministic=True, mask=None):
@@ -98,6 +101,7 @@ class Encoder(nn.Module):
       block = Encoder1DBlock(
           name=f"encoderblock_{lyr}",
           normalize_qk=self.normalize_qk,
+          qkv_features=self.qkv_features,
           mlp_dim=self.mlp_dim, num_heads=self.num_heads, dropout=self.dropout)
       x, out[f"block{lyr:02d}"] = block(x, deterministic, mask)
     out["pre_ln"] = x  # Alias for last block, but without the number in it.

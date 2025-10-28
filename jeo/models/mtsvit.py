@@ -1,4 +1,4 @@
-# Copyright 2024 DeepMind Technologies Limited.
+# Copyright 2025 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -452,7 +452,7 @@ def maybe_make_5d(x, patch_size):
 def expand_to_ndim(x, ndim, start_at=1):
   """If x is not ndim, appends dimensions staring at `start_at` dimension."""
   if x.ndim > ndim:
-    raise ValueError(f"Input x {x.shape} has more than {ndim} dimenstions.")
+    raise ValueError(f"Input x {x.shape} has more than {ndim} dimensions.")
   if x.ndim < ndim:
     x = jnp.expand_dims(x, tuple(range(start_at, start_at + (ndim - x.ndim))))
   return x
