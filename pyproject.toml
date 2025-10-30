@@ -25,6 +25,7 @@ dependencies = [
     "einops",
     "flax",
     "jax",
+    "matplotlib",
     "ml_collections",
     "numpy>=1.26",
     "optax",

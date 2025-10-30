@@ -304,10 +304,16 @@ def _get_metrics_inputs(
       assert "labels" not in metrics_inputs
       metrics_inputs["labels"] = inputs[key]
 
-  potential_model_inputs = ["label_weights", "mask", "noisy_pixels"]
-  for key in potential_model_inputs:
+  potential_inputs = [
+      "label_weights",
+      "mask",
+      "noisy_pixels",
+      "stratification_values",
+  ]
+  for key in potential_inputs:
     if key in inputs:
       metrics_inputs[key] = inputs[key]
+
   return metrics_inputs
 
 

@@ -21,10 +21,61 @@ https://github.com/google-research/big_vision/blob/main/big_vision/utils.py
 import io
 import os
 import re
+import shutil
 
 import jax
 from jeo.tools import tree_utils
 import numpy as np
+
+
+def save_checkpoint_oss(
+    checkpoint, path, step_copy=None, compressed=False, group=None
+):
+  """Util for checkpointing: saves jax pytree objects to the disk.
+
+  Args:
+    checkpoint: arbitrary jax pytree to be saved.
+    path: a path to save the checkpoint.
+    step_copy: creates a copy of the checkpoint with `path-{step_copy}` name.
+    compressed: whether to use np.savez or np.savez_compressed.
+    group: not supported yet, will be ignored.
+  """
+  del group  # not supported yet.
+
+  names_and_vals, _ = tree_utils.tree_flatten_with_names(checkpoint)
+  io_buffer = io.BytesIO()
+
+  if compressed:
+    np.savez_compressed(io_buffer, **{k: v for k, v in names_and_vals})
+  else:
+    np.savez(io_buffer, **{k: v for k, v in names_and_vals})
+
+  # In order to be robust to interruptions we first save checkpoint to the
+  # temporal file and then move to actual path name.
+  path_tmp = path + "-TEMPORARY"
+
+  try:
+    if os.path.exists(path_tmp):
+      os.remove(path_tmp)
+
+    with open(path_tmp, "wb") as f:
+      f.write(io_buffer.getvalue())
+
+    if step_copy is not None:
+      copy_path = f"{path}-{step_copy:09d}"
+      if os.path.exists(copy_path):
+        os.remove(copy_path)
+      shutil.copyfile(path_tmp, copy_path)
+
+    os.replace(path_tmp, path)
+  except OSError as e:
+    print(f"Error saving checkpoint to {path}: {e}")
+    if os.path.exists(path_tmp):
+      try:
+        os.remove(path_tmp)
+      except OSError as e2:
+        print(f"Error cleaning up temporary file {path_tmp}: {e2}")
+    raise
 
 
 def npload(fname):
@@ -33,10 +84,7 @@ def npload(fname):
   if os.path.exists(fname):
     loaded = np.load(fname, allow_pickle=False)
   else:
-    # For other (remote) paths go via gfile+BytesIO as np.load requires seeks.
-    with gfile.GFile(fname, "rb") as f:
-      data = f.read()
-    loaded = np.load(io.BytesIO(data), allow_pickle=False)
+    raise FileNotFoundError(f"Checkpoint file not found: {fname!r}")
 
   # Support loading both single-array files (np.save) and zips (np.savez).
   if isinstance(loaded, np.ndarray):

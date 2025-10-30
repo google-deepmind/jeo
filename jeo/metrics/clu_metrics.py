@@ -351,6 +351,13 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
   exclude_background_class: bool = False
 
   @classmethod
+  def empty(cls, num_classes: int, exclude_background_class: bool = False):
+    return cls(
+        matrix=jnp.zeros((num_classes, num_classes), dtype=jnp.int32),
+        exclude_background_class=exclude_background_class,
+    )
+
+  @classmethod
   def from_model_output(
       cls,
       labels: jnp.ndarray,  # (B,...) or (B,...,N)
