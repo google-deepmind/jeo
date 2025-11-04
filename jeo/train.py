@@ -509,7 +509,7 @@ def _main(_):
           **state_cpu,
       }
       ckpt_writer = pool.apply_async(
-          checkpointing.save_checkpoint,
+          checkpointing.save_checkpoint_oss,
           (checkpoint, save_ckpt_path, copy_step, FLAGS.file_group),
       )
       chrono.resume()

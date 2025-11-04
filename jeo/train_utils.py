@@ -167,9 +167,9 @@ def _disabled_seek(*_):
 
 
 def save_metrics(workdir: str, metrics: dict[str, Any],
-                 step: int | None = None):
+                 step: int | None = None, filename: str = "metrics.npz"):
   """Saves metrics as npz."""
-  path = os.path.join(workdir, "metrics.npz")
+  path = os.path.join(workdir, filename)
   with gfile.GFile(path, "wb") as f:
     setattr(f, "seek", _disabled_seek)
     np.savez(f, **metrics)
