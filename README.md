@@ -32,26 +32,38 @@ workflow is outlined below.
 
 Projects and publications that used this codebase:
 
--   Light-weight geospatial model for global deforestation attribution, by
+-   [Light-weight geospatial model for global deforestation attribution](https://www.climatechange.ai/papers/neurips2024/49), by
     *Anton Raichuk, Michelle Sims, Radost Stanimirova, and Maxim Neumann*.
     Presented at the
     [NeurIPS 2024 Workshop on Tackling Climate Change with Machine Learning](https://www.climatechange.ai/events/neurips2024)
-    in Vancouver, BC, Canada. Dec 2024.
+    in Vancouver, BC, Canada, Dec 2024.
 -   [Planted: a dataset for planted forest identification from multi-satellite
     time series](https://arxiv.org/abs/2406.18554), by *Luis Miguel Pazos-Outón,
     Cristina Nader Vasconcelos, Anton Raichuk, Anurag Arnab, Dan Morris, and
-    Maxim Neumann*. Presented at [IGARSS 2024](https://www.2024.ieeeigarss.org/)
-    in Athens, Greece. Jul 2024.
--   Global drivers of forest loss at 1 km resolution, by *Michelle Sims, Radost
-    Stanimirova, Anton Raichuk, Maxim Neumann, Jessica Richter, Forrest Follett,
+    Maxim Neumann*. In proceedings of IGARSS 2024, Athens, Greece, Jul 2024.
+-   [Global drivers of forest loss at 1 km resolution](https://iopscience.iop.org/article/10.1088/1748-9326/add606),
+    by *Michelle Sims, Radost Stanimirova, Anton Raichuk, Maxim Neumann,
+    Jessica Richter, Forrest Follett,
     James MacCarthy, Kristine Lister, Christopher Randle, Lindsey Sloat, Elena
     Esipova, Jaelah Jupiter, Charlotte Stanton, Dan Morris, Christy Slay, Drew
-    Purves, and Nancy Harris*, Environmental Research Letters (ERL) (in print),
-    2025 ([EarthArxiv](https://eartharxiv.org/repository/view/8284/)).
--   ForestCast: Forecasting deforestation risk at scale with deep learning, by
-    *Matt Overlan, Charlotte Stanton, Maxim Neumann, Michelangelo Conserva,
-    Yuchang Jiang, Arianna Manzini, Julia Haas, Mélanie Rey, Keith Anderson, and
-    Drew Purves*, 2025.
+    Purves, and Nancy Harris*, Environmental Research Letters,
+    Jun 2025.
+-   [Not every tree is a forest: benchmarking forest types from remote sensing](https://arxiv.org/abs/2505.01805),
+    by *Yuchang Jiang and Maxim Neumann*.
+    In proceedings of IGARSS 2025, Brisbane, Australia, Aug 2025.
+-   [Uncertainty evaluation of segmentation models for Earth observation](https://arxiv.org/abs/2510.19586),
+    by *Mélanie Rey, Andriy Mnih, Maxim Neumann, Matt Overlan, Drew Purves*.
+    ArXiv, Oct 2025.
+-   [ForestCast: Forecasting Deforestation Risk at Scale with Deep Learning](https://eartharxiv.org/repository/view/10674/), by
+    *Matthew Overlan, Charlotte Stanton, Maxim Neumann, Arianna Manzini,
+    Julia Haas, Michelangelo Conserva, Melanie Rey, Kira Prabhu, Youngin Shin,
+     Kuan Lu, Drew Purves*, EarthArXiv, Nov 2025.
+-   [Natural forests of the world: a 2020 baseline for deforestation and degradation monitoring](https://www.nature.com/articles/s41597-025-06097-z),
+    by *Maxim Neumann, Anton Raichuk, Yuchang Jiang, Mélanie Rey,
+    Radost Stanimirova, Michelle J. Sims, Sarah Carter, Elizabeth Goldman,
+    Keith Anderson, Petra Poklukar, Katelyn Tarrio, Myroslava Lesiv,
+    Steffen Fritz, Nicholas Clinton, Charlotte Stanton, Dan Morris,
+    Drew Purves*. Nature Scientific Data, Nov 2025.
 
 ## Getting started
 
@@ -91,15 +103,25 @@ file `jeo/configs/tests/tiny_bit.py`.
 In a standard workflow, the given `workdir` will be used to save checkpoints and
 potentially other artifacts, such as final evaluation metrics.
 
+## Contributors
+
+Alex Wilson, Anton Raichuk, Burak Ekim,
+Cristina Nader Vasconcelos,
+Evelyn Camacho Soberon,
+Giovanni Ciampi,
+Keith Anderson,
+Linus Scheibenreif, Luis Miguel Pazos-Outón,
+Matt Overlan, Maxim Neumann, Mélanie Rey, Michelangelo Conserva,
+Petra Poklukar,
+Vishal Batchu, Yuchang Jiang
+
 ## Citing JEO
 
 To cite this repository:
 
 ```
 @software{jeo2025:github,
-  author = {Maxim Neumann and Anton Raichuk and Michelangelo Conserva and
-  Luis Miguel Pazos-Outón and Keith Anderson and Matt Overlan and Mélanie Rey
-  and Yuchang Jiang and Petra Poklukar and Cristina Nader Vasconcelos},
+  author = {Jeo team},
   title = {{JEO}: Model training and inference for geospatial remote sensing and
   {E}arth {O}bservation in {JAX}},
   url = {https://github.com/google-deepmind/jeo},

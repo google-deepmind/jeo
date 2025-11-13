@@ -273,9 +273,10 @@ def get_extract_channels(
   """Extracts channels to separate tensors."""
 
   def _pp(features):
+    outputs = {}
     for key, ind in key_channels.items():
-      features[key] = tf.gather(features[from_key], ind, axis=axis)
-    return features
+      outputs[key] = tf.gather(features[from_key], ind, axis=axis)
+    return features | outputs
 
   return _pp
 
