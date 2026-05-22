@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -57,7 +57,8 @@ class EvaluatorBase(abc.ABC):
     """Constructs dataset and sets steps and iter attributes."""
     batch_size_per_host = cfg.get("batch_size_per_host",
                                   batch_size // jax.process_count())
-    pp_fn = pp_builder.get_preprocess_fn(cfg["pp"])
+    pp_fn = pp_builder.get_preprocess_fn(cfg["pp"], dataset=cfg.get("dataset"),
+                                         split=cfg["split"])
     ds, self.steps = input_pipeline.get_data(
         train=False,
         dataset=cfg.get("dataset"),
@@ -79,7 +80,7 @@ class EvaluatorBase(abc.ABC):
     if self.steps <= 0:
       raise ValueError(f"Insufficient val steps. steps: {self.steps} "
                        f"batch_size_eval: {batch_size}")
-    self.data_iter = input_pipeline.start_input_pipeline(
+    self.data_iter = input_pipeline.get_iter(
         ds, cfg.get("prefetch_to_device", 1))
 
 

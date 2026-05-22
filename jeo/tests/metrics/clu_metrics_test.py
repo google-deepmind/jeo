@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -335,6 +335,43 @@ class MetricsTest(parameterized.TestCase):
     result_masked = update_masked.compute()
     np.testing.assert_array_equal(result_masked, expected_masked)
 
+  @parameterized.named_parameters(
+      dict(testcase_name="no_window",
+           labels=np.array([[[[0]], [[1]], [[0]], [[1]], [[2]], [[2]], [[0]],
+                             [[1]]]], dtype=np.float32),
+           window_size=1,
+           expected=np.array([[[[0]], [[1]], [[0]], [[1]], [[2]], [[2]], [[0]],
+                               [[1]]]], dtype=np.float32)),
+      dict(testcase_name="no_window_small",
+           labels=np.array([[[[0]], [[1]], [[0]], [[1]]]], dtype=np.float32),
+           window_size=1,
+           expected=np.array([[[[0]], [[1]], [[0]], [[1]]]], dtype=np.float32)),
+      dict(testcase_name="window_3",
+           labels=np.array([[[[0]], [[1]], [[0]], [[1]], [[2]], [[2]], [[0]],
+                             [[1]]]], dtype=np.float32),
+           window_size=3,
+           expected=np.array([[[[1]], [[1]], [[1]], [[2]], [[2]], [[2]], [[2]],
+                               [[1]]]], dtype=np.float32)),
+      dict(testcase_name="window_3_small",
+           labels=np.array([[[[0]], [[1]], [[0]], [[1]]]], dtype=np.float32),
+           window_size=3,
+           expected=np.array([[[[1]], [[1]], [[1]], [[1]]]], dtype=np.float32)),
+      dict(testcase_name="window_5",
+           labels=np.array([[[[0]], [[1]], [[0]], [[1]], [[2]], [[2]], [[0]],
+                             [[1]]]], dtype=np.float32),
+           window_size=5,
+           expected=np.array([[[[1]], [[1]], [[2]], [[2]], [[2]], [[2]], [[2]],
+                               [[2]]]], dtype=np.float32)),
+      dict(testcase_name="window_5_small",
+           labels=np.array([[[[0]], [[1]], [[0]], [[1]]]], dtype=np.float32),
+           window_size=5,
+           expected=np.array([[[[1]], [[1]], [[1]], [[1]]]], dtype=np.float32))
+      )
+  def test_max_aggregate_labels(self, labels, window_size, expected):
+    actual = clu_metrics.ConfusionMatrix3DWithRollingMaxLabels.aggregate_labels(
+        labels, window_size)
+    np.testing.assert_array_equal(actual, expected)
+
   @parameterized.named_parameters(("jit", True), ("no-jit", False))
   def test_miou(self, jitted):
     labels = jnp.array([0, 1, 2, 0])
@@ -448,37 +485,6 @@ class MetricsTest(parameterized.TestCase):
     np.testing.assert_array_almost_equal(result, expected)
 
   @parameterized.named_parameters(("jit", True), ("no-jit", False))
-  def test_roc_auc(self, jitted):
-    labels = jnp.array([0, 1, 2, 2, 0])
-    logits = jnp.array([[0.9, 0.0, 0.1],  # Correct.
-                        [0.8, 0.1, 0.1],  # Wrong.
-                        [0.1, 0.2, 0.7],  # Correct.
-                        [0.1, 0.2, 0.7],  # Correct.
-                        [0.3, 0.3, 0.4]])  # Wrong.
-    # Expected auc, using manually computed softmax of filtered examples, which
-    # corresponds to = softmax([[0.1, 0.1],
-    #                           [0.2, 0.7],
-    #                           [0.2, 0.7]])[:, 1]
-    expected = clu_metrics.sklearn.metrics.roc_auc_score(
-        [0, 1, 1], [0.5, 0.6226, 0.6226]
-    )
-
-    metrics_fn = clu_metrics.ROCAUC.from_model_output
-    if jitted:
-      metrics_fn = jax.jit(metrics_fn, static_argnums=(2, 3, 4))
-    update = metrics_fn(labels=labels, logits=logits, sample_proportion=1,
-                        false_label_ind=1, true_label_ind=2)
-    result = update.compute()
-    np.testing.assert_array_equal(result, expected)
-
-    # Test that an update with same values results in the same result.
-    new_update = metrics_fn(labels=labels, logits=logits, sample_proportion=1,
-                            false_label_ind=1, true_label_ind=2)
-    merged = update.merge(new_update)
-    merged_result = merged.compute()
-    np.testing.assert_array_equal(merged_result, expected)
-
-  @parameterized.named_parameters(("jit", True), ("no-jit", False))
   def test_pearson_r(self, jitted):
     ignore_label, false_label_ind, true_label_ind = (0, 1, 2)
     labels = np.array([[1, 1, 1], [0, 1, 2], [2, 0, 2]])
@@ -509,6 +515,39 @@ class MetricsTest(parameterized.TestCase):
     actual = update.compute()
 
     self.assertAlmostEqual(actual, expected, places=4)
+
+  @parameterized.named_parameters(("jit", True), ("no-jit", False))
+  def test_smape(self, jitted):
+    logits = jnp.array([1.0, 2.0, 0.0])
+    labels = jnp.array([1.0, 1.0, 1.0])
+    metrics_fn = clu_metrics.SMAPE.from_model_output
+    # loss per element: [0, 2/3, 2]
+    expected = jnp.array(8/9)
+
+    if jitted:
+      metrics_fn = jax.jit(metrics_fn)
+
+    update = metrics_fn(labels=labels, logits=logits)
+    result = update.compute()
+    self.assertEqual(result.shape, expected.shape)
+    np.testing.assert_array_almost_equal(result, expected)
+
+    # Test with mask.
+    mask = jnp.array([1.0, 1.0, 0.0])
+    update = metrics_fn(labels=labels, logits=logits, mask=mask)
+    result = update.compute()
+    expected = jnp.array(1/3)
+    np.testing.assert_array_almost_equal(result, expected)
+
+    # Perfect match.
+    update = metrics_fn(labels=jnp.array([1., 1.]), logits=jnp.array([1., 1.]))
+    result = update.compute()
+    np.testing.assert_array_almost_equal(result, 0.)
+
+    # Both zero.
+    update = metrics_fn(labels=jnp.array([0., 0.]), logits=jnp.array([0., 0.]))
+    result = update.compute()
+    np.testing.assert_array_almost_equal(result, 0.)
 
   @parameterized.named_parameters(("jit", True), ("no-jit", False))
   def test_bias(self, jitted):
@@ -597,10 +636,10 @@ class MetricsTest(parameterized.TestCase):
 
   @parameterized.named_parameters(("jit", True), ("no-jit", False))
   def test_mae(self, jitted):
-    logits = jnp.array([15.0, 25.0, 35.0])
-    labels = jnp.array([10.0, 20.0, 30.0])
+    logits = jnp.array([15.0, 25.0, 35.0, 35.0]).reshape((2, 1, 2))
+    labels = jnp.array([10.0, 20.0, 30.0, 35.0]).reshape((2, 1, 2))
     metrics_fn = clu_metrics.MAE.from_model_output
-    expected = jnp.array(5.0)
+    expected = jnp.array(3.75)
 
     if jitted:
       metrics_fn = jax.jit(metrics_fn)
@@ -648,8 +687,8 @@ class MetricsTest(parameterized.TestCase):
 
   def test_stratified_avg_metric(self):
     # Simulate inputs
-    logits = jnp.array([1.1, 2.2, 3.3, 4.4, 5.5, 6.6])
-    labels = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    logits = jnp.array([1.1, 2.2, 3.3, 4.4, 5.5, 6.6]).reshape((2, 1, 3))
+    labels = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).reshape((2, 1, 3))
 
     # Stratification bins
     stratification_bins = {
@@ -659,9 +698,9 @@ class MetricsTest(parameterized.TestCase):
 
     # Extra data for stratification
     extra = {
-        "key1": jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+        "key1": jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).reshape((2, 1, 3)),
         # note that the last value is out of bounds.
-        "key2": jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 9.0]),
+        "key2": jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 9.0]).reshape((2, 1, 3)),
     }
 
     metric_fn = clu_metrics.get_stratified_avg_metric("mae")
@@ -686,8 +725,8 @@ class MetricsTest(parameterized.TestCase):
     # Bin 1 (0-2.5): Perfectly correlated
     # Bin 2 (2.5-5.0): Negatively correlated
     # Bin 3 (5.0-7.0): No correlation
-    logits = jnp.array([1.0, 2.0, 3.0, 4.0, 5.5, 6.0, 6.5])
-    labels = jnp.array([1.1, 2.1, 4.0, 3.0, 5.0, 6.5, 6.0])
+    logits = jnp.array([1.0, 2.0, 3.0, 4.0, 5.5, 6.0, 6.5]).reshape((7, 1, 1))
+    labels = jnp.array([1.1, 2.1, 4.0, 3.0, 5.0, 6.5, 6.0]).reshape((7, 1, 1))
     # Stratification bins
     stratification_bins = [0, 2.5, 5.0, 7.0]
 
@@ -765,6 +804,18 @@ class MetricsTest(parameterized.TestCase):
          ]
     ])
     self.assertTrue(np.allclose(confusion_matrix, expected_confusion_matrix))
+
+  def test_accuracy_multilabel(self):
+    logits = jnp.array([[1.0, 2.0, 10.0, 5.5, 7.5], [10, 4, 2, 1, 7]])
+    labels_onehot = jnp.array([[0, 0, 1, 1, 1], [0, 1, 1, 1, 1]])
+
+    metric = clu_metrics.PartialMultilabelAccuracy.from_model_output(
+        logits=logits,
+        labels_onehot=labels_onehot,
+    )
+
+    accuracy = metric.compute()
+    self.assertEqual(accuracy, 0.5)
 
 
 if __name__ == "__main__":

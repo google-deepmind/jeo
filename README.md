@@ -1,7 +1,7 @@
 # Jeo - Jax Geo lib
 
 <div style="text-align: left">
-<img align="right" src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_1.png" width="100" alt="jeo logo">
+<img align="right" src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_blue.png" width="100" alt="jeo logo">
 </div>
 
 *Model training and inference for geospatial remote sensing and Earth

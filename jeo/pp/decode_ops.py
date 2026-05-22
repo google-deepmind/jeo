@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,23 +23,31 @@ import tensorflow as tf
 @Registry.register("preprocess_ops.decode_jeo_satellites", replace=True)
 def get_decode_jeo_satellites(
     sat_keys, data_dir, dataset, zero_pad=True, clip=False, normalize=True,
-    norm_split="train", vmin=-1., vmax=1., centers=None, scales=None):
+    norm_split="train", vmin=-1., vmax=1., centers=None, scales=None,
+    norm_overrides=None):
   """Decodes standardized drivers example."""
   if normalize:
     centers = centers or {}
     scales = scales or {}
-    center_and_scale_per_satellite = {
-        sat: pp_utils.load_normalization_ranges(
-            dataset, split_name=norm_split, postfix=sat, data_dir=data_dir,
-            center=centers.get(sat, "bins_median"),
-            scale=scales.get(sat, "bins_mad_std"))
-        for sat in sat_keys}
+    norm_overrides = norm_overrides or {}
+    center_and_scale_per_satellite = {}
+    for sat in sat_keys:
+      sat_for_stats = norm_overrides.get(sat, sat)
+      is_small_valued_data = (sat_for_stats.startswith("efm") or
+                              sat_for_stats.startswith("ccdc"))
+      center_default = "mean" if is_small_valued_data else "bins_median"
+      scale_default = "std" if is_small_valued_data else "bins_mad_std"
+      center_and_scale_per_satellite[sat] = pp_utils.load_normalization_ranges(
+          dataset, split_name=norm_split, postfix=sat_for_stats,
+          data_dir=data_dir,
+          center=centers.get(sat_for_stats, center_default),
+          scale=scales.get(sat_for_stats, scale_default))
 
   def _pp(data):
     for sat in sat_keys:
       if normalize:
         if sat.endswith("_mask"):  # Keep original mask (1: valid, 0: invalid).
-          return
+          continue
         center, scale = center_and_scale_per_satellite[sat]  # pytype: disable=name-error
         if center is not None and scale is not None:
           data[sat] = (tf.cast(data[sat], tf.float32) - center) / scale

@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ Based on http://github.com/google-research/big_vision/tree/HEAD/big_vision/pp/bu
 Authors: Joan Puigcerver, Alexander Kolesnikov.
 """
 import ast
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import contextlib
 import functools
 from typing import Any
@@ -28,8 +28,13 @@ from absl import logging
 import tensorflow as tf
 
 
-def get_preprocess_fn(pp_pipeline: str | None, log_data: bool = True,
-                      log_steps: bool = False) -> Callable[[Any], Any]:
+def get_preprocess_fn(
+    pp_pipeline: str | None,
+    log_data: bool = True,
+    log_steps: bool = False,
+    dataset: str | None = None,
+    split: str | Sequence[str] | None = None,
+) -> Callable[[Any], Any]:
   """Transform an input string into the preprocessing function.
 
   The minilanguage is as follows:
@@ -50,6 +55,14 @@ def get_preprocess_fn(pp_pipeline: str | None, log_data: bool = True,
     log_data: Whether to log the data before and after preprocessing. Can also
       be a string to show in the log for debugging, for example dataset name.
     log_steps: Whether to log the steps of the preprocessing pipeline.
+    dataset: Name of the dataset. If given, adds the dataset marker
+      (__dataset) to the data before preprocessing, and deletes this marker
+      after preprocessing, allowing to condition and debug pp ops based on
+      specific datasets.
+    split: Name of the split or a list of split names. If given, adds the split
+      marker (__splits) to the data before preprocessing, and deletes this
+      marker after preprocessing, allowing to condition and debug pp ops based
+      on specific splits.
 
   Returns:
     preprocessing function.
@@ -57,7 +70,8 @@ def get_preprocess_fn(pp_pipeline: str | None, log_data: bool = True,
   Raises:
     ValueError: if preprocessing function name is unknown
   """
-
+  if dataset:
+    dataset = dataset.split(":")[0].split("/")[-1]
   names, ops, spec_strings = [], [], []
   if pp_pipeline:
     for op_spec in pp_pipeline.split("|"):
@@ -73,6 +87,12 @@ def get_preprocess_fn(pp_pipeline: str | None, log_data: bool = True,
     """The preprocessing function that is returned."""
     nonlocal log_data, log_steps
 
+    if dataset:
+      data["__dataset"] = dataset
+    if split:
+      splits = split.split("+") if isinstance(split, str) else split
+      data["__splits"] = [s.split("[")[0] for s in splits]
+
     # Apply all the individual steps in sequence.
     if log_data:
       logging.info("Data before pre-processing (%s):\n%s", log_data, data)
@@ -86,6 +106,11 @@ def get_preprocess_fn(pp_pipeline: str | None, log_data: bool = True,
     if not isinstance(data, dict):
       raise ValueError("Argument `data` must be a dictionary, "
                        "not %s" % str(type(data)))
+
+    if "__dataset" in data:
+      del data["__dataset"]
+    if "__splits" in data:
+      del data["__splits"]
 
     if log_data:
       logging.info("Data after pre-processing (%s):\n%s", log_data, data)

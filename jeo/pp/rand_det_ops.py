@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -155,7 +155,7 @@ def get_det_flip_rot(*, randkey: str = "flip_rot"):
   """Deterministically flip and rotate by an orthogonal angle."""
 
   def _pp(image, data):
-    orig_shape = image.shape
+    orig_shape = tf.shape(image)
     orig_ndims = image.ndim
     orig_dtype = image.dtype
     if orig_dtype == tf.bool:
@@ -189,20 +189,52 @@ def get_det_flip_rot(*, randkey: str = "flip_rot"):
 def get_det_crop(crop_size: int, num_crops: int = 1, randkey: str = "crop"):
   """Deterministically crops an image `num_crops` times."""
   crop_size = pp_utils.maybe_repeat(crop_size, 2)
-  crop_fn = tf.image.stateless_random_crop
 
   def _det_crop(image, data):
     seed = tf.cast(2**30 * data[randkey], "int32")
-    shape = crop_size
-    if image.ndim == 3:
-      shape = (*crop_size, image.shape[-1])
-    elif image.ndim == 4:
-      shape = (image.shape[0], *crop_size, image.shape[-1])
-    if num_crops > 1:
-      return tf.vectorized_map(
-          lambda _: crop_fn(image, shape, [seed, seed + 1]), tf.range(num_crops)
+    image_shape = tf.shape(image)
+
+    # Reshape 2D & 4D inputs to 3D to simplify cropping logic and ensure
+    # consistent offsets across different modalities
+    # (e.g. 3D radiance and 4D angles).
+    ndim = image.ndim
+    if ndim == 2:
+      image = image[..., None]
+    elif ndim == 4:
+      image = tf.reshape(
+          image,
+          [image_shape[1], image_shape[2], image_shape[0] * image_shape[3]],
       )
-    return crop_fn(image, shape, [seed, seed + 1])
+    elif ndim != 3:
+      raise ValueError(f"Unsupported image rank: {ndim}")
+
+    shape = tf.shape(image)
+    h, w = shape[0], shape[1]
+
+    ch, cw = crop_size[0], crop_size[1]
+    ratios = tf.random.stateless_uniform(
+        [num_crops, 2], seed=[seed, seed + 1], minval=0.0, maxval=1.0
+    )
+    y0s = tf.cast(ratios[:, 0] * tf.cast(h - ch + 1, tf.float32), tf.int32)
+    x0s = tf.cast(ratios[:, 1] * tf.cast(w - cw + 1, tf.float32), tf.int32)
+    crops = []
+    for i in range(num_crops):
+      crop = image[y0s[i] : y0s[i] + ch, x0s[i] : x0s[i] + cw, :]
+      # Explicitly set the H, W shape of the crop as otherwise TF is not able to
+      # infer the shape of the cropped image statically.
+      crop.set_shape([crop_size[0], crop_size[1], None])
+      if ndim == 2:
+        crop = crop[..., 0]
+      elif ndim == 4:
+        crop = tf.reshape(
+            crop,
+            [image_shape[0], crop_size[0], crop_size[1], image_shape[3]],
+        )
+      crops.append(crop)
+    cropped = tf.stack(crops)
+    if num_crops == 1:
+      cropped = cropped[0]
+    return cropped
 
   return _det_crop
 
@@ -214,13 +246,14 @@ def get_det_resize(
 ):
   """Deterministically resizes an image with a ratio from the given range."""
 
-  def _det_crop(image, data):
+  def _det_resize(image, data):
     # [0, 1] -> [min_ratio, max_ratio]
     ratio = (max_ratio - min_ratio) * data[randkey] + min_ratio
 
     # Computes new shape.
-    *_, h, w, _ = image.shape
-    h, w = int(h * ratio), int(w * ratio)
+    image_shape = tf.shape(image)
+    h = tf.cast(tf.cast(image_shape[-3], tf.float32) * ratio, tf.int32)
+    w = tf.cast(tf.cast(image_shape[-2], tf.float32) * ratio, tf.int32)
 
     # Bilinear is more suited to floating points.
     method = "bilinear" if image.dtype.is_floating else "nearest"
@@ -229,7 +262,7 @@ def get_det_resize(
     image = tf.cast(image, "float32")
     return tf.cast(tf.image.resize(image, (h, w), method), image.dtype)
 
-  return _det_crop
+  return _det_resize
 
 
 @Registry.register("preprocess_ops.det_noise", replace=True)

@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -80,6 +80,41 @@ def get_skai_concat(key1: str = "pre_image_png", key2: str = "post_image_png",
   return _pp
 
 
+@Registry.register("preprocess_ops.check_finite", replace=True)
+def get_check_finite(
+    keys: Sequence[str] | None = None, msg: str = ""
+):
+  """Checks for NaNs and infs in given keys using tf.debugging.check_numerics.
+
+  If no keys are provided, it checks all features with floating dtype.
+
+  Args:
+    keys: Keys to check for NaNs and infs. If empty, checks all floating type
+      features.
+    msg: Message to include in the error message.
+
+  Returns:
+    A preprocessing function.
+  """
+
+  def _pp(features):
+    keys_to_check = keys or features.keys()
+    for k in keys_to_check:
+      if k not in features:
+        raise ValueError(
+            f"Key '{k}' was provided to check_finite but is not in features."
+        )
+      if features[k].dtype.is_floating:
+        base_message = f"Key '{k}' had nans or infs"
+        message = f"{base_message} ({msg})" if msg else base_message
+        features[k] = tf.debugging.check_numerics(
+            features[k], message=message
+        )
+    return features
+
+  return _pp
+
+
 @Registry.register("preprocess_ops.jeo_concat", replace=True)
 def get_concat(keys: Sequence[str], outkey: str = "image", axis: int = -1,
                pop_origs: bool = True, broadcast: bool = False):
@@ -144,14 +179,16 @@ def get_squeeze_dim(*keys: Sequence[str], axis: int = 0):
 
 
 @Registry.register("preprocess_ops.max", replace=True)
-def get_max(*keys: Sequence[str], axis: int = 0):
+def get_max(*keys: Sequence[str], axis: int = 0, keepdims: bool = False):
   """Runs reduce_max on a given axis (can provide multiple keys)."""
   if len(keys) == 1 and isinstance(keys[0], (list, tuple)):
     keys = keys[0]
 
   def _pp(features):
     for k in keys:
-      features[k] = tf.math.reduce_max(features[k], axis=axis)
+      features[k] = tf.math.reduce_max(
+          features[k], axis=axis, keepdims=keepdims
+      )
     return features
 
   return _pp
@@ -218,6 +255,21 @@ def get_ensure_shape(shape: Sequence[int]):
   # ops are incorrect and sometimes you don't get the expected shape.
   def _pp(tensor):
     return tf.ensure_shape(tensor, shape)
+  return _pp
+
+
+@Registry.register("preprocess_ops.debug_assert_shapes", replace=True)
+def get_debug_assert_shapes(shapes: dict[str, Sequence[int]]):
+  """Asserts shapes for given keys."""
+
+  def _pp(data):
+    for key, shape in shapes.items():
+      if key in data:
+        tf.debugging.assert_shapes(
+            [(data[key], shape)], message=f"Shape mismatch for {key}"
+        )
+    return data
+
   return _pp
 
 

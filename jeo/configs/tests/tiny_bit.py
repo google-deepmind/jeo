@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ def get_config(arg=None):
     del config.ckpt_steps
 
   if arg.test:
-    config.batch_size = 2
+    config.batch_size = 16
     config.total_epochs = None
     config.total_steps = 2
     config.schedule.warmup_steps = 1

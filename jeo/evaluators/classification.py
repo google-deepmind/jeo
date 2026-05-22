@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,10 +13,8 @@
 # limitations under the License.
 
 """Classification evaluator."""
-import functools
 from typing import Any, Callable
 
-import flax
 import jax
 import jax.numpy as jnp
 from jeo import losses
@@ -85,7 +83,7 @@ class Evaluator(eval_builder.EvaluatorBase):
   def _get_eval_fn(self, predict_fn):
     """Produces eval function, also applies pmap."""
 
-    @functools.partial(jax.pmap, axis_name="batch")
+    @jax.jit
     def _eval_fn(params, batch):
       logits, *_ = predict_fn(params, **batch)  # logits: (B,N)
       if self.logits_postprocess_fn:
@@ -96,6 +94,9 @@ class Evaluator(eval_builder.EvaluatorBase):
       if self.logits_filter_key:
         logits = logits + batch[self.logits_filter_key]
       labels = batch["labels"]
+      if self.class_mapping:
+        for a, b in self.class_mapping.items():
+          labels = jnp.where(labels == a, b, labels)
       if self.multihead:
         # logits (B,num_task_heads,N)
         head = batch["head"]
@@ -140,7 +141,7 @@ class Evaluator(eval_builder.EvaluatorBase):
           "mask": self._get_mask(batch),  # (B,)
       }
       extra = {"exclude_background_class": self.exclude_background_class}
-      metrics_updates = self.metrics_fn(loss, outputs, inputs, extra, "batch")
+      metrics_updates = self.metrics_fn(loss, outputs, inputs, extra, None)
       return metrics_updates, (logits,)
     return _eval_fn
 
@@ -161,7 +162,7 @@ class Evaluator(eval_builder.EvaluatorBase):
     self.metrics.reset_states()
     for _, batch in zip(range(self.steps), self.data_iter):
       update, model_outputs = self.eval_fn(params, batch)
-      self.metrics.update_state(flax.jax_utils.unreplicate(update))
+      self.metrics.update_state(update)
     for k, v in self.metrics.result().items():
       if k == "confusion_matrix" and self.per_class_metrics:
         for name, value in utils.get_per_class_metrics(

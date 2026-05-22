@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,7 +31,8 @@ SingleFn = Callable[
     [jnp.ndarray, DataDict, DataDict, DataDict], "ExpandedCollection"
 ]
 GatherFn = Callable[
-    [jnp.ndarray, DataDict, DataDict, DataDict, str], "ExpandedCollection"
+    [jnp.ndarray, DataDict, DataDict, DataDict, str | None],
+    "ExpandedCollection",
 ]
 
 
@@ -170,6 +171,8 @@ def get_metrics_cls(
       metrics_dict[name] = clu_metrics_builder.Average.from_output("loss")
     elif reg_name in ["accuracy", "acc"]:
       metrics_dict[name] = clu_metrics.Accuracy
+    elif reg_name in ["accuracy_partial_multilabel", "acc_partial_multilabel"]:
+      metrics_dict[name] = clu_metrics.PartialMultilabelAccuracy
     elif reg_name == "loss_std":
       metrics_dict[name] = clu_metrics_builder.Std.from_output("loss")
     elif reg_name.endswith("_loss"):  # Supporting additional losses.
@@ -213,6 +216,8 @@ def get_metrics_cls(
       metrics_dict[name] = clu_metrics.MSE
     elif reg_name == "rmse":
       metrics_dict[name] = clu_metrics.RMSE
+    elif reg_name == "smape":
+      metrics_dict[name] = clu_metrics.SMAPE
     elif reg_name == "bias":
       metrics_dict[name] = clu_metrics.Bias
     elif reg_name == "spearman_correlation":
@@ -237,8 +242,13 @@ def get_metrics_cls(
       metrics_dict[name] = clu_metrics.MIoU
     elif reg_name == "confusion_matrix":  # non-scalar, excluded from XM.
       metrics_dict[name] = clu_metrics.ConfusionMatrix
+    elif reg_name == "confusion_matrix_multilabel":
+      # non-scalar, excluded from XM.
+      metrics_dict[name] = clu_metrics.ConfusionMatrixMultilabel
     elif reg_name == "confusion_matrix_3d":
       metrics_dict[name] = clu_metrics.ConfusionMatrix3D
+    elif reg_name == "confusion_matrix_3d_rolling_max_labels":
+      metrics_dict[name] = clu_metrics.ConfusionMatrix3DWithRollingMaxLabels
     elif reg_name == "strata_binary_confusion_matrix":
       # non-scalar, excluded from XM.
       metrics_dict[name] = clu_metrics.PerStrataBinaryConfusionMatrix
@@ -292,6 +302,7 @@ def _get_metrics_inputs(
       "log_variances",
       "pred_uncertainty",
       "logit_samples",
+      "concentration_predictions",
   ]
   for key in potential_model_outputs:
     if key in outputs:
@@ -307,8 +318,10 @@ def _get_metrics_inputs(
   potential_inputs = [
       "label_weights",
       "mask",
+      "labels_onehot",
       "noisy_pixels",
       "stratification_values",
+      "concentration_labels",
   ]
   for key in potential_inputs:
     if key in inputs:
@@ -337,12 +350,14 @@ def get_gathered_update(
     outputs: DataDict,
     inputs: DataDict,
     opt_params: DataDict,
-    axis_name: str = "batch",
+    axis_name: str | None = "batch",
 ) -> ExpandedCollection:
   """Constructs metrics update to be used inside pmapped functions."""
   metrics_inputs = _get_metrics_inputs(
       loss=loss, outputs=outputs, inputs=inputs, opt_params=opt_params
   )
+  if axis_name is None:
+    return metrics_cls.single_from_model_output(**metrics_inputs)
   return metrics_cls.gather_from_model_output(
       axis_name=axis_name, **metrics_inputs
   )

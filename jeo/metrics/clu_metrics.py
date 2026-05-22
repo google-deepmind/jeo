@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,12 +14,13 @@
 
 """Metrics (currently heavily based on Hubways CLU metrics)."""
 import dataclasses
-from typing import Any, Sequence
+from typing import Any, Sequence, TypeVar
 
 from clu import metrics as clu_metrics_builder
 import flax
 import jax
 from jax import lax
+from jax.experimental import multihost_utils
 import jax.experimental.sparse
 import jax.numpy as jnp
 import numpy as np
@@ -27,8 +28,8 @@ import scipy.stats
 import sklearn.metrics
 
 
-def _default_threshold() -> np.ndarray:
-  return np.array(
+def get_default_thresholds() -> jnp.ndarray:
+  return jnp.array(
       [0.0 - 1e-7]
       + [(i + 1) * 1.0 / (200 - 1) for i in range(200 - 2)]
       + [1.0 + 1e-7]
@@ -60,7 +61,7 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
   true_negatives: jnp.ndarray
   false_positives: jnp.ndarray
   false_negatives: jnp.ndarray
-  thresholds: np.ndarray = dataclasses.field(default_factory=_default_threshold)
+  thresholds: jnp.ndarray
 
   @classmethod
   def from_model_output(
@@ -70,8 +71,11 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
       label_weights: jnp.ndarray | None = None,
       mask: jnp.ndarray | None = None,
       exclude_background_class: bool = False,
+      thresholds: jnp.ndarray | None = None,
       **_,
   ) -> clu_metrics_builder.Metric:
+    if thresholds is None:
+      thresholds = get_default_thresholds()
     # Handling the non-multilabel case.
     if labels.ndim == predictions.ndim - 1:
       labels = onehot(labels, num_classes=predictions.shape[-1])
@@ -108,7 +112,7 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
     masked_label_weigthts = masked_label_weigthts[None, ...]  # (1, M, 1)
 
     pred_is_pos = jnp.greater(
-        predictions, _default_threshold()[..., None, None]
+        predictions, thresholds[..., None, None]
     )  # (T, M, N)
     pred_is_neg = jnp.logical_not(pred_is_pos)
     label_is_pos = jnp.equal(labels, 1)  # (M, N)
@@ -130,6 +134,7 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
         true_negatives=tn.sum(axis=1),
         false_positives=fp.sum(axis=1),
         false_negatives=fn.sum(axis=1),
+        thresholds=thresholds,
     )
 
   def merge(
@@ -140,6 +145,7 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
         "true_negatives",
         "false_positives",
         "false_negatives",
+        "thresholds",
     ]:
       _assert_same_shape(getattr(self, i), getattr(other, i))
     return type(self)(
@@ -147,6 +153,7 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
         true_negatives=self.true_negatives + other.true_negatives,
         false_positives=self.false_positives + other.false_positives,
         false_negatives=self.false_negatives + other.false_negatives,
+        thresholds=self.thresholds,
     )
 
   def _get_precision_recall(self):
@@ -157,8 +164,19 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
     recall = divide_no_nan(tp, tp + fn)
     return (precision, recall)
 
-  def compute(self) -> jnp.ndarray:
-    raise NotImplementedError("Must override compute()")
+  def compute(self):
+    return dict(
+        cm=jnp.stack(
+            [
+                self.true_positives,
+                self.true_negatives,
+                self.false_positives,
+                self.false_negatives,
+            ],
+            axis=0,
+        ),
+        thresholds=self.thresholds,
+    )
 
 
 @flax.struct.dataclass
@@ -251,10 +269,11 @@ def recall_at_precision_function_expensive(precision_point: float):
     """
 
     def compute(self):
-      weights = np.concatenate(self.values["label_weights"])
+      values = self.gather()
+      weights = values["label_weights"]
       precision, recall, _ = sklearn.metrics.precision_recall_curve(
-          np.concatenate(self.values["labels"]).flatten(),
-          np.concatenate(self.values["predictions"]).flatten(),
+          values["labels"].flatten(),
+          values["predictions"].flatten(),
           sample_weight=weights.flatten(),
       )
 
@@ -467,6 +486,46 @@ class ConfusionMatrix3D(ConfusionMatrix):
                exclude_background_class=exclude_background_class)
 
 
+@flax.struct.dataclass
+class ConfusionMatrix3DWithRollingMaxLabels(ConfusionMatrix3D):
+  """3D confusion matrix for multiclass classification/segmentation tasks.
+  """
+
+  @staticmethod
+  def aggregate_labels(labels, window_size):
+    """Aggregates labels over a rolling window."""
+
+    padding = window_size // 2
+    padded_labels = jnp.pad(
+        labels, ((0, 0), (padding, padding), (0, 0), (0, 0)), mode="constant"
+    )
+    return jax.lax.reduce_window(
+        padded_labels, -jnp.inf, jnp.maximum, (1, window_size, 1, 1),
+        (1, 1, 1, 1), "VALID"
+    )
+
+  @classmethod
+  def from_model_output(
+      cls,
+      labels: jnp.ndarray,  # (B,T,...) or (B,T,...,N)
+      logits: jnp.ndarray,  # (B,T,...,N)
+      label_weights: jnp.ndarray | None = None,  # (B,T,...)
+      mask: jnp.ndarray | None = None,  # (B,)
+      exclude_background_class: bool = False,
+      window_size: int = 3,
+      **_,
+  ) -> clu_metrics_builder.Metric:
+    agg_labels = cls.aggregate_labels(labels, window_size)
+    return super().from_model_output(
+        labels=agg_labels,
+        logits=logits,
+        label_weights=label_weights,
+        mask=mask,
+        exclude_background_class=exclude_background_class,
+        **_,
+    )
+
+
 def isin(x: jnp.ndarray, choices: int | Sequence[int]) -> jnp.ndarray:
   """Returns elementwise True if `x`-element is in `choices`."""
   if isinstance(choices, int):
@@ -552,7 +611,9 @@ class PerStrataConfusionMatrix(ConfusionMatrix):
       strata_size: int = 0,
       **_,
   ) -> clu_metrics_builder.Metric:
-    assert strata is not None and strata_size > 0
+    assert (
+        strata is not None and strata_size > 0
+    ), f"strata: {strata}, strata_size: {strata_size}"
     assert predictions is not None
 
     if labels.ndim == predictions.ndim:
@@ -564,6 +625,8 @@ class PerStrataConfusionMatrix(ConfusionMatrix):
     if label_weights.ndim != labels.ndim:
       raise ValueError(f"Unequal shapes: label_weights({label_weights.shape}), "
                        f"labels({labels.shape})")
+    if exclude_background_class:
+      label_weights = jnp.where(labels == 0, 0, label_weights)
 
     pred = predictions.argmax(-1).flatten()
     strata = strata.flatten()
@@ -657,6 +720,43 @@ class RecallMacro(ConfusionMatrix):
 
 
 @flax.struct.dataclass
+class PartialMultilabelAccuracy(clu_metrics_builder.Average):
+  """Computes the accuracy from model outputs `logits` and `labels_onehot` for partial multilabel tasks."""
+
+  @classmethod
+  def from_model_output(
+      cls,
+      *,
+      logits: jnp.ndarray,
+      labels_onehot: jnp.ndarray,
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
+      **kwargs,
+  ) -> clu_metrics_builder.Metric:
+    assert logits.shape == labels_onehot.shape, (
+        f"Unequal shapes: logits({logits.shape}),"
+        f" labels_onehot({labels_onehot.shape})"
+    )
+    # Per-pixel (label) weights are merged into mask, in order to not count
+    # pixels towards the accuracy which have weight==0.
+    # To have separate mask and weights inputs is needed for some corner cases
+    # where some metrics expect 1d mask, while in other cases we want to mask
+    # out sub-example elements.
+    # Eg. computing per-example losses, and dense per-pixel accuracy.
+    if label_weights is not None:  # Or per-pixel weights.
+      if mask is None:
+        mask = label_weights
+      else:
+        mask = label_weights * jnp.expand_dims(mask, list(range(
+            mask.ndim, label_weights.ndim)))
+    return super().from_model_output(
+        values=(jax.nn.one_hot(logits.argmax(axis=-1),
+                               num_classes=logits.shape[-1]) *
+                labels_onehot).sum(axis=-1).astype(jnp.float32),
+        mask=mask, **kwargs)
+
+
+@flax.struct.dataclass
 class Accuracy(clu_metrics_builder.Average):
   """Computes the accuracy from model outputs `logits` and `labels`."""
 
@@ -745,8 +845,10 @@ class MSE(clu_metrics_builder.Average):
       mask: jnp.ndarray | None = None,
       **kwargs,
   ) -> clu_metrics_builder.Metric:
-    logits = jnp.squeeze(logits)
-    labels = jnp.squeeze(labels)
+    if logits.shape[0] == 1:
+      logits = jnp.squeeze(logits, axis=0)
+    if labels.shape[0] == 1:
+      labels = jnp.squeeze(labels, axis=0)
     assert logits.ndim == labels.ndim
     if label_weights is not None:  # Or per-pixel weights.
       if mask is None:
@@ -757,7 +859,8 @@ class MSE(clu_metrics_builder.Average):
     if mask is not None:
       # Squeeze local batch size of one when then number of tpu chips is equal
       # to batch size.
-      mask = jnp.squeeze(mask)
+      if mask.shape[0] == 1:
+        mask = jnp.squeeze(mask, axis=0)
     return super().from_model_output(
         values=((logits - labels)**2), mask=mask, **kwargs)
 
@@ -792,8 +895,10 @@ class MAE(clu_metrics_builder.Average):
       mask: jnp.ndarray | None = None,
       **kwargs,
   ) -> clu_metrics_builder.Metric:
-    logits = jnp.squeeze(logits)
-    labels = jnp.squeeze(labels)
+    if logits.shape[0] == 1:
+      logits = jnp.squeeze(logits, axis=0)
+    if labels.shape[0] == 1:
+      labels = jnp.squeeze(labels, axis=0)
     assert logits.ndim == labels.ndim
     if label_weights is not None:  # Or per-pixel weights.
       if mask is None:
@@ -805,7 +910,8 @@ class MAE(clu_metrics_builder.Average):
     if mask is not None:
       # Squeeze local batch size of one when then number of tpu chips is equal
       # to batch size.
-      mask = jnp.squeeze(mask)
+      if mask.shape[0] == 1:
+        mask = jnp.squeeze(mask, axis=0)
     return super().from_model_output(
         values=(jnp.abs(logits - labels)), mask=mask, **kwargs
     )
@@ -904,6 +1010,11 @@ def get_stratified_avg_metric(metric_name: str):
             lambda logits, labels: logits,
             PearsonCorrelation,
         ),
+        "smape": (
+            lambda logits, labels: (2 * jnp.abs(logits - labels))
+            / (jnp.abs(labels) + jnp.abs(logits) + 1e-8),
+            SMAPE,
+        ),
     }[metric_name]
   except KeyError as e:
     raise ValueError(f"Unsupported stratified metric: {metric_name}") from e
@@ -931,10 +1042,14 @@ def get_stratified_avg_metric(metric_name: str):
         mask: jnp.ndarray | None = None,
         **kwargs,
     ) -> clu_metrics_builder.Metric:
-      logits = jnp.squeeze(logits)
-      labels = jnp.squeeze(labels)
+      if logits.shape[0] == 1:
+        logits = jnp.squeeze(logits, axis=0)
+      if labels.shape[0] == 1:
+        labels = jnp.squeeze(labels, axis=0)
       assert logits.ndim == labels.ndim
       if label_weights is not None:  # Or per-pixel weights.
+        if label_weights.ndim > 0 and label_weights.shape[0] == 1:
+          label_weights = jnp.squeeze(label_weights, axis=0)
         if mask is None:
           mask = label_weights
         else:
@@ -946,7 +1061,8 @@ def get_stratified_avg_metric(metric_name: str):
       if mask is not None:
         # Squeeze local batch size of one when then number of tpu chips is equal
         # to batch size.
-        mask = jnp.squeeze(mask)
+        if mask.shape[0] == 1:
+          mask = jnp.squeeze(mask, axis=0)
       else:
         mask = jnp.ones_like(labels)
 
@@ -970,6 +1086,8 @@ def get_stratified_avg_metric(metric_name: str):
               f" {list(kwargs.keys())}"
           )
         data_to_stratify = kwargs[key]
+        if data_to_stratify.shape[0] == 1:
+          data_to_stratify = jnp.squeeze(data_to_stratify, axis=0)
         # Make sure that the data to stratify is of the same shape as the labels
         # and logits so that we can use it to index into the bins.
         assert data_to_stratify.shape == labels.shape == logits.shape
@@ -1075,10 +1193,52 @@ class ECE(clu_metrics_builder.Average):
     return super().from_model_output(values=ece/sum(labels.shape), **kwargs)
 
 
+T = TypeVar("T", bound="CollectingMetric")
+
+
 @flax.struct.dataclass
-class ROCAUC(
-    clu_metrics_builder.CollectingMetric.from_outputs(("targets", "probs"))
-):
+class CollectingMetric(clu_metrics_builder.Metric):
+  """Metric that collects data across batches and gathers it for computation.
+
+  Base class for metrics that need to collect data from multiple devices/hosts
+  before the final computation can be performed.
+
+  Attributes:
+    _values: A dictionary storing the raw metric data on the local host.
+    Subclasses should probably call `self.gather()` in their `compute()` method
+    rather than accessing `_values` directly.
+  """
+  _values: dict[str, jnp.ndarray]
+
+  @classmethod
+  def from_outputs(cls: type[T], **kwargs) -> T:
+    """Creates a metric from kwargs, adding a batch dimension to each value.
+
+    Args:
+      **kwargs: The metric values to be collected. A batch dimension will be
+        added to each value.
+
+    Returns:
+      A new metric instance with the values stored in `_values`.
+    """
+    return cls(_values=jax.tree.map(lambda x: jnp.expand_dims(x, 0), kwargs))
+
+  def merge(self: T, other: T) -> T:
+    return type(self)(
+        _values=jax.tree.map(
+            lambda x, y: jnp.concatenate([x, y]), self._values, other._values  # pylint: disable=protected-access
+        )
+    )
+
+  def gather(self) -> dict[str, jnp.ndarray]:
+    """Gathers metric data from all hosts."""
+    return multihost_utils.process_allgather(
+        jax.tree.map(lambda x: x.flatten(), self._values), tiled=True
+    )
+
+
+@flax.struct.dataclass
+class ROCAUC(CollectingMetric):
   """Computes Area Under the ROC Curve metric (ROC AUC)."""
 
   @classmethod
@@ -1122,23 +1282,19 @@ class ROCAUC(
     # Keeping replace=True to avoid the ill-defined case when num_samples is
     # bigger then the number of non-zero probability values.
     subsampled_idxs = jax.random.choice(rng, idxs, shape=(num_samples,), p=p)
-
-    return super().from_model_output(targets=targets[subsampled_idxs],
-                                     probs=probs[subsampled_idxs])
+    return cls.from_outputs(
+        targets=targets[subsampled_idxs], probs=probs[subsampled_idxs]
+    )
 
   def compute(self):
-    values = super().compute()
+    values = self.gather()
     y_true = values["targets"]
     y_score = values["probs"]
     return sklearn.metrics.roc_auc_score(y_true, y_score)
 
 
 @flax.struct.dataclass
-class ExamplePearsonCorr(
-    clu_metrics_builder.CollectingMetric.from_outputs(
-        ("proportion_true", "mean_prob")
-    )
-):
+class ExamplePearsonCorr(CollectingMetric):
   """Computes the example-wise Pearson correlation."""
 
   @classmethod
@@ -1177,11 +1333,12 @@ class ExamplePearsonCorr(
     probs = probs[..., 1]
     mean_prob = jnp.mean(probs, axis=non_batch_axes, where=mask)  # (B,)
 
-    return super().from_model_output(
-        proportion_true=proportion_true, mean_prob=mean_prob)
+    return cls.from_outputs(
+        proportion_true=proportion_true, mean_prob=mean_prob
+    )
 
   def compute(self):
-    values = super().compute()
+    values = self.gather()
     x = values["proportion_true"]
     y = values["mean_prob"]
     # mask out NaNs introduced by batch padding
@@ -1192,11 +1349,7 @@ class ExamplePearsonCorr(
 
 
 @flax.struct.dataclass
-class ExpensiveAUCPR(
-    clu_metrics_builder.CollectingMetric.from_outputs(
-        ("labels", "predictions", "label_weights")
-    )
-):
+class ExpensiveAUCPR(CollectingMetric):
   """Computes AUC PR curve.
 
   This metric computation doesn't use mask feature.
@@ -1217,14 +1370,14 @@ class ExpensiveAUCPR(
   ) -> "ExpensiveAUCPR":
     if mask is None:
       mask = jnp.ones(labels.shape[0])
-    return super().from_model_output(
+    return cls.from_outputs(
         predictions=predictions,
         labels=labels,
         label_weights=label_weights * mask[..., None],
     )
 
   def compute(self):
-    values = super().compute()
+    values = self.gather()
     weights = values["label_weights"]
     precision, recall, _ = sklearn.metrics.precision_recall_curve(
         y_true=values["labels"].flatten(),
@@ -1235,11 +1388,7 @@ class ExpensiveAUCPR(
 
 
 @flax.struct.dataclass
-class SpearmanCorrelation(
-    clu_metrics_builder.CollectingMetric.from_outputs(
-        ("logits", "labels", "mask")
-    )
-):
+class SpearmanCorrelation(CollectingMetric):
   """Computes spearman correlation."""
 
   @classmethod
@@ -1256,12 +1405,10 @@ class SpearmanCorrelation(
       raise NotImplementedError(
           "No support for label_weights in SpearmanCorrelation."
       )
-    return super().from_model_output(
-        logits=logits, labels=labels, mask=mask, **kwargs
-    )
+    return cls.from_outputs(logits=logits, labels=labels, mask=mask)
 
   def compute(self):
-    values = super().compute()
+    values = self.gather()
     labels = values["labels"].flatten()[values["mask"] == 1]
     logits = values["logits"].flatten()[values["mask"] == 1]
     return scipy.stats.spearmanr(a=labels, b=logits).correlation
@@ -1420,6 +1567,46 @@ class MaskCount(clu_metrics_builder.Metric):
 
   def compute(self) -> Any:
     return self.count
+
+
+@flax.struct.dataclass
+class SMAPE(clu_metrics_builder.Average):
+  """Computes Symmetric Mean Absolute Percentage Error (SMAPE)."""
+
+  @classmethod
+  def from_model_output(
+      cls,
+      *,
+      logits: jnp.ndarray,
+      labels: jnp.ndarray,
+      label_weights: jnp.ndarray | None = None,
+      mask: jnp.ndarray | None = None,
+      eps: float = 1e-8,
+      **kwargs,
+  ) -> clu_metrics_builder.Metric:
+    if logits.shape[0] == 1:
+      logits = jnp.squeeze(logits, axis=0)
+    if labels.shape[0] == 1:
+      labels = jnp.squeeze(labels, axis=0)
+    assert logits.ndim == labels.ndim
+    if label_weights is not None:  # Or per-pixel weights.
+      if mask is None:
+        mask = label_weights
+      else:
+        mask = label_weights * jnp.expand_dims(
+            mask, list(range(mask.ndim, label_weights.ndim))
+        )
+    if mask is not None:
+      # Squeeze local batch size of one when then number of tpu chips is equal
+      # to batch size.
+      if mask.shape[0] == 1:
+        mask = jnp.squeeze(mask, axis=0)
+
+    numerator = jnp.abs(logits - labels)
+    denominator = (jnp.abs(logits) + jnp.abs(labels)) / 2.0
+    values = numerator / (denominator + eps)
+
+    return super().from_model_output(values=values, mask=mask, **kwargs)
 
 
 # Copied from

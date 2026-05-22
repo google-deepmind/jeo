@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -173,9 +173,74 @@ def sigmoid_xent(
     if normalize:
       if weights is None:
         norm_factor = jnp.prod(jnp.array(labels.shape[1:]))
+        loss = loss / norm_factor
       else:
-        norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
-      loss = loss / norm_factor
+        sum_weights = weights.sum(axis=non_batch_axes)
+        valid_norm = sum_weights > 0
+        norm_factor = jnp.where(valid_norm, sum_weights, 1.0)
+        loss = loss / norm_factor
+        loss = jnp.where(valid_norm, loss, 0.0)
+  return jnp.mean(loss) if reduction else loss
+
+
+def partial_label_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    normalize: bool = True,
+    entropy_weight: float = 0.1,
+):
+  """Computes the Log-Sum-Exp loss for partial labels w/ entropy regularization.
+
+  This implements Log-Sum-Exp loss for partial labels, also known as
+  Infimum Loss: -log(sum_k_in_S p_k), where p_k are softmax probabilities
+  and S is the set of candidate classes for a given sample.
+
+  Args:
+   logits: (B, ..., N) float array.
+   labels: Multi-hot encoded labels (B, ..., N).
+   reduction: Wether to reduce across batch dim.
+   weights: None or array of shape [B, ...].
+   normalize: normalize each batch item loss by the number of elements (pixels,
+     tokens) in it. Otherwise, each pixel/token losses are added together.
+   entropy_weight: Controling regularization strength (0: no regularization)
+  Returns:
+    Scalar loss () or per_batch_item loss (B,).
+  """
+  assert logits.ndim == labels.ndim, "Expected multi-hot labels."
+  # Mask logits when labels are 0.
+  masked_logits = jnp.where(labels > 0, logits, -1e9)
+  # Log-Sum-Exp over the classes (effectively `log(sum(exp(logits) * mask))`).
+  log_sum_exp = jax.nn.logsumexp(masked_logits, axis=-1)
+  # Normalize by the total energy (standard Softmax denominator)
+  # log(sum(e^x_valid) / sum(e^x_all)) = log(sum(e^x_valid)) - log(sum(e^x_all))
+  log_norm = jax.nn.logsumexp(logits, axis=-1)
+  # Infimum NLL (negative log-likelihood) loss.
+  loss = -(log_sum_exp - log_norm)
+
+  # Entropy regularization to encourage more spiky logits.
+  if entropy_weight > 0:
+    log_probs = jax.nn.log_softmax(logits, axis=-1)
+    probs = jnp.exp(log_probs)
+    # Entropy H(p) = - sum(p * log(p))
+    entropy = -jnp.sum(probs * log_probs, axis=-1)
+    loss = loss + entropy_weight * entropy
+
+  if weights is not None:
+    if weights.ndim < loss.ndim:  # Expand dims to match loss.
+      weights = weights[(...,) + (None,) * (loss.ndim - weights.ndim)]
+    loss = loss * weights
+
+  non_batch_axes = range(1, logits.ndim - 1)
+  loss = loss.sum(axis=non_batch_axes)
+  if normalize:
+    if weights is None:
+      norm_factor = jnp.prod(jnp.array(logits.shape[1:-1]))
+    else:
+      norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
+    loss = loss / norm_factor
+
   return jnp.mean(loss) if reduction else loss
 
 
@@ -452,12 +517,43 @@ def huber_loss(
       labels = jax.nn.one_hot(labels, logits.shape[-1])
     else:
       logits = jnp.squeeze(logits, -1)
-  loss = optax.huber_loss(logits, labels, delta)
+  loss = optax.huber_loss(logits, labels, delta=delta)
   non_batch_axes = tuple(range(1, loss.ndim))
   if weights is None:
     loss = loss.mean(axis=non_batch_axes)
   else:
     if weights.ndim == loss.ndim - 1:
+      weights = weights[..., None]
+    sum_weights = weights.sum(axis=non_batch_axes)
+    valid_norm = sum_weights > 0
+    norm_factor = jnp.where(valid_norm, sum_weights, 1.0)
+    loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
+    loss = jnp.where(valid_norm, loss, 0.0)
+  return loss.mean() if reduction else loss
+
+
+def smape_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    eps: float = 1e-8,
+) -> jnp.ndarray:
+  """Computes Symmetric Mean Absolute Percentage Error (SMAPE) loss."""
+  if logits.ndim == labels.ndim + 1:
+    logits = jnp.squeeze(logits, -1)
+  chex.assert_equal_shape((logits, labels))
+
+  numerator = jnp.abs(logits - labels)
+  denominator = (jnp.abs(logits) + jnp.abs(labels)) / 2.0
+  loss = numerator / (denominator + eps)
+
+  non_batch_axes = tuple(range(1, labels.ndim))
+  if weights is None:
+    loss = loss.mean(axis=non_batch_axes)
+  else:
+    if weights.ndim == labels.ndim - 1:
       weights = weights[..., None]
     norm_factor = jnp.clip(weights.sum(axis=non_batch_axes), 2e-38)
     loss = (loss * weights).sum(axis=non_batch_axes) / norm_factor
@@ -881,15 +977,18 @@ CLASSIFICATION_LOSS_FNS = {
     "generalized_softmax_xent": generalized_softmax_xent,
     "softmax_focal_loss": softmax_focal_loss,
     "lq_loss": lq_loss,
+    "partial_label_loss": partial_label_loss,
 }
 REGRESSION_LOSS_FNS = {
     "l1_loss": l1_loss,
     "l2_loss": l2_loss,
     "kld_loss": kld_loss,
     "huber_loss": huber_loss,
+    "smape_loss": smape_loss,
 }
 SEMANTIC_SEGMENTATION_LOSS_FNS = {
     "generalized_dice": generalized_dice,
+    "partial_label_loss": partial_label_loss,
 }
 REGRESSION_SEGMENTATION_FNS = {  # Only for reference and testing.
     "l1_loss": l1_loss,

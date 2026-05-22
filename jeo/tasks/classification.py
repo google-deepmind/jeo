@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,6 +52,19 @@ class ClassificationTask(task_builder.TaskBase):
     if train:
       aux = jax.tree.map(jnp.mean, aux)
     return loss, aux
+
+  def get_infer_postprocessing_fn(self):
+    """Returns a function to postprocess model outputs for inference."""
+
+    def fn(model_outputs):
+      if not isinstance(model_outputs, (list, tuple)):
+        model_outputs = (model_outputs,)
+      logits, _ = model_outputs  # pytype: disable=bad-unpacking
+      predictions = jnp.argmax(logits, axis=-1)
+      probs = (250 * jax.nn.softmax(logits)).astype(jnp.uint8)
+      return {"preds": predictions, "probs": probs}
+
+    return fn
 
 
 class MultiHeadClassificationTask(task_builder.TaskBase):

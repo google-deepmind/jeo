@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ from typing import Any
 
 from absl import logging
 import jax
+from jax.experimental import multihost_utils
 from jeo.tools import tree_utils
 import ml_collections
 import numpy as np
@@ -116,13 +117,6 @@ def get_files(file_patterns: str | Sequence[str]) -> list[str]:
   return files
 
 
-def sync():
-  """Syncs hosts and empties async computation queue."""
-  x = jax.numpy.ones([jax.local_device_count()])
-  x = jax.device_get(jax.pmap(lambda x: jax.lax.psum(x, "i"), "i")(x))
-  assert x[0] == jax.device_count()
-
-
 def finalize_and_cleanup(
     workdir: str | None, cleanup: bool, error_msg: str | None
 ):
@@ -130,9 +124,8 @@ def finalize_and_cleanup(
   # Before cleanup, as cleanup should only run for successful jobs.
   if error_msg is not None:
     raise RuntimeError(error_msg)
-  else:
-    # Make sure all hosts stay up until the end of main.
-    sync()
+
+  multihost_utils.sync_global_devices("sync")
 
   if cleanup and workdir and jax.process_index() == 0:
     gfile.rmtree(workdir)
@@ -174,9 +167,8 @@ def save_metrics(workdir: str, metrics: dict[str, Any],
     setattr(f, "seek", _disabled_seek)
     np.savez(f, **metrics)
   if step is not None:
-    gfile.makedirs(
+    os.umask(0o022); gfile.makedirs(
         os.path.join(workdir, "intermediate_metrics"),
-        mode=gfile.LEGACY_GROUP_WRITABLE_WORLD_READABLE,
     )
     step_path = os.path.join(
         workdir, "intermediate_metrics", f"metrics-{step:09d}.npz"

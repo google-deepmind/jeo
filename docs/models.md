@@ -1,0 +1,8 @@
+# Models
+
+(internal link)
+
+<!--*
+# Document freshness: For more information, see (internal link).
+freshness: { owner: 'maximneumann' reviewed: '2026-05-21' }
+*-->

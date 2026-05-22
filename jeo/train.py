@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ from jeo.tools import bv_optax
 from jeo.tools import checkpointing
 from jeo.tools import inspect
 from jeo.tools import metric_writers
+from kauldron.utils.sharding_utils import sharding  # pylint: disable=g-importing-member
 from ml_collections import config_flags
 import numpy as np
 import optax
@@ -88,7 +89,9 @@ def _main(_):
       workdir,
   )
   train_utils.validate_and_update_config_inplace(config)
-  os.umask(0o022); gfile.makedirs(workdir)
+  os.umask(0o022); gfile.makedirs(
+      workdir,
+  )
 
   # The pool is used to perform misc operations such as logging in async way.
   pool = multiprocessing.pool.ThreadPool()
@@ -173,7 +176,7 @@ def _main(_):
       data_service_address=FLAGS.data_service_address,
   )
   # Start prefetching already.
-  train_iter = input_pipeline.start_input_pipeline(
+  train_iter = input_pipeline.get_iter(
       train_ds, config.get("prefetch_to_device", 1)
   )
   steps_per_epoch = ntrain_img / batch_size
@@ -294,18 +297,18 @@ def _main(_):
   sched_fns_cpu = [jax.jit(sched_fn, backend="cpu") for sched_fn in sched_fns]
 
   # ## Trainer section 4: Train step update function.
-  @partial(jax.pmap, axis_name="batch", donate_argnums=(0, 1))
+  @partial(jax.jit, donate_argnums=(0, 1, 2), out_shardings=sharding.REPLICATED)
   def update_fn(params, state, opt, rng, batch):
     """Update step."""
     measurements = {}
     # Get device-specific loss rng.
     rng, rng_model = jax.random.split(rng, 2)
-    rng_local = jax.random.fold_in(rng_model, jax.lax.axis_index("batch"))
+
     # Use Mix-augmentation for segmentation.
     if "mixup" in config:
-      rng_local, batch = mixup.get_mixup(rng_local, batch, **config.mixup)
+      rng_model, batch = mixup.get_mixup(rng_model, batch, **config.mixup)
     rngs_local = dict(
-        zip(train_rng_names, jax.random.split(rng_local, len(train_rng_names)))
+        zip(train_rng_names, jax.random.split(rng_model, len(train_rng_names)))
     )
 
     def loss_fn(params, state, batch):
@@ -325,7 +328,6 @@ def _main(_):
         params, state, batch
     )
     measurements["l2_grads_raw"] = optax.global_norm(grads)
-    l, aux, grads = jax.lax.pmean((l, aux, grads), axis_name="batch")
     updates, opt = tx.update(grads, opt, params)
     params = optax.apply_updates(params, updates)
     state = aux.pop("state")
@@ -396,9 +398,9 @@ def _main(_):
   prof = None  # Keeps track of start/stop of profiler state.
 
   write_note(f"Replicating...\n{chrono.note}")
-  params_repl = flax.jax_utils.replicate(params_cpu)
-  state_repl = flax.jax_utils.replicate(state_cpu)
-  opt_repl = flax.jax_utils.replicate(opt_cpu)
+  params_repl = sharding.device_put(params_cpu, sharding.REPLICATED)
+  state_repl = sharding.device_put(state_cpu, sharding.REPLICATED)
+  opt_repl = sharding.device_put(opt_cpu, sharding.REPLICATED)
 
   # We do not jit/pmap this function, because it is passed to evaluator that
   # does it later. We output as many intermediate tensors as possible for
@@ -415,8 +417,7 @@ def _main(_):
   )
   early_stopper = early_stopping.from_config(config, steps_per_epoch)
 
-  _, rng_loop = jax.random.split(rng, 2)
-  rngs_loop = flax.jax_utils.replicate(rng_loop)
+  rngs_loop = sharding.device_put(rng, sharding.REPLICATED)
   ckpt_writer = None
 
   def run_evaluators(step, stop_training=False):
@@ -493,11 +494,11 @@ def _main(_):
       )
       # We need to transfer the weights over now or else we risk keeping them
       # alive while they'll be updated in a future step, creating hard to debug
-      # memory errors (see (internal link)). Also, takes device 0's params only.
-      params_cpu = jax.tree.map(lambda x: np.array(x[0]), params_repl)
-      opt_cpu, state_cpu = jax.tree.map(
-          lambda x: np.array(x[0]), (opt_repl, state_repl)
-      )
+      # memory errors (see (internal link)).
+      params_cpu = jax.device_get(params_repl)
+      opt_cpu = jax.device_get(opt_repl)
+      state_cpu = jax.device_get(state_repl)
+
       # Check whether we want to keep a copy of the current checkpoint.
       copy_step = None
       if train_utils.itstime(step, keep_ckpt_steps, total_steps):
@@ -510,7 +511,8 @@ def _main(_):
       }
       ckpt_writer = pool.apply_async(
           checkpointing.save_checkpoint_oss,
-          (checkpoint, save_ckpt_path, copy_step, FLAGS.file_group),
+          args=(checkpoint, save_ckpt_path, copy_step),
+          kwds={"group": FLAGS.file_group},
       )
       chrono.resume()
     # Report training progress.
@@ -522,10 +524,11 @@ def _main(_):
     ):
       for i, sched_fn_cpu in enumerate(sched_fns_cpu):
         mw.measure(f"global_schedule{i if i else ''}", sched_fn_cpu(step - 1))
-      l = mw.measure("training_loss", loss_value[0])  # pylint: disable=undefined-variable
+      l = mw.measure("training_loss", jax.device_get(loss_value))  # pylint: disable=undefined-variable
+      measurements = jax.device_get(measurements)
       for name, value in measurements.items():  # pylint: disable=undefined-variable
-        mw.measure(name, value[0])
-        stop_training |= early_stopper.should_stop(step, name, value[0])
+        mw.measure(name, value)
+        stop_training |= early_stopper.should_stop(step, name, value)
       # Report training metrics aggregated between the logging events.
       for name, value in inspect.pytree_list_to_dict(train_metrics).items():
         mw.measure(f"{name}_agg", value.mean())

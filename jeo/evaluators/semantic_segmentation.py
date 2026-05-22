@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,16 +13,15 @@
 # limitations under the License.
 
 """Semantic segmentation evaluator."""
-import functools
 from typing import Any, Callable
 
-import flax
 import jax
 import jax.numpy as jnp
 from jeo import losses
 from jeo.evaluators import builder as eval_builder
 from jeo.evaluators import utils
-
+from jeo.metrics import clu_metrics
+import numpy as np
 
 DEFAULT_METRICS = ("acc", "loss", "miou")
 
@@ -61,6 +60,8 @@ class Evaluator(eval_builder.EvaluatorBase):
       class_mapping=None,
       logits_filter_key=None,
       logits_postprocess_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+      multilabel_threshold: float = 0.5,
+      multilabel_thresholds: np.ndarray | None = None,
       **cfg,
   ):
     self._setup_metrics_and_eval_iter(metrics, predict_fn)
@@ -81,6 +82,12 @@ class Evaluator(eval_builder.EvaluatorBase):
     self.strata_weights = strata_weights
     self.logits_filter_key = logits_filter_key
     self.class_mapping = class_mapping
+    self.multilabel_threshold = multilabel_threshold
+    self.multilabel_thresholds = (
+        clu_metrics.get_default_thresholds()
+        if multilabel_thresholds is None
+        else multilabel_thresholds
+    )
 
   def _get_metric_inputs(self):
 
@@ -97,6 +104,12 @@ class Evaluator(eval_builder.EvaluatorBase):
       labels = batch[self.labels_key]  # (B,[T],H,W,[N|1])
       if labels.shape[-1] == 1:
         labels = labels[..., 0]  # (B,[T],H,W)
+      if self.class_mapping:
+        for a, b in self.class_mapping.items():
+          labels = jnp.where(labels == a, b, labels)
+      labels_onehot = labels
+      if labels_onehot.ndim < logits.ndim:
+        labels_onehot = jax.nn.one_hot(labels, num_classes=logits.shape[-1])
       int_labels = labels.argmax(-1) if labels.shape == logits.shape else labels
 
       if self.exclude_background_class:
@@ -125,6 +138,7 @@ class Evaluator(eval_builder.EvaluatorBase):
       # We ensure to pass integer labels to the metrics.
       inputs = {
           "labels": int_labels,  # (B,[T],H,W)
+          "labels_onehot": labels_onehot,  # (B,[T],H,W,N)
           "label_weights": weights,  # (B,[T],H,W)
           "mask": (batch["_mask"])  # (B,)
       }
@@ -142,14 +156,14 @@ class Evaluator(eval_builder.EvaluatorBase):
   def _get_eval_fn(self, predict_fn):
     """Produces eval function, also applies pmap."""
 
-    @functools.partial(jax.pmap, axis_name="batch")
+    @jax.jit
     def _eval_fn(params, batch):
       model_outputs = predict_fn(params, **batch)
       if not isinstance(model_outputs, (list, tuple)):
         model_outputs = (model_outputs,)
 
       loss, outputs, inputs, extra = self.metric_inputs_fn(batch, model_outputs)
-      metrics_updates = self.metrics_fn(loss, outputs, inputs, extra, "batch")
+      metrics_updates = self.metrics_fn(loss, outputs, inputs, extra, None)
       return metrics_updates, model_outputs
 
     return _eval_fn
@@ -164,9 +178,14 @@ class Evaluator(eval_builder.EvaluatorBase):
     self.metrics.reset_states()
     for _, batch in zip(range(self.steps), self.data_iter):
       update, model_outputs = self.eval_fn(params, batch)
-      self.metrics.update_state(flax.jax_utils.unreplicate(update))
+      self.metrics.update_state(update)
 
     for k, v in self.metrics.result().items():
+      if k == "confusion_matrix_multilabel/cm" and self.per_class_metrics:
+        for name, value in utils.get_per_class_multilabel_metrics(
+            v, self.label_map, self.per_class_metrics,
+            self.multilabel_threshold, self.multilabel_thresholds):
+          yield (name, value)
       if k == "confusion_matrix" and self.per_class_metrics:
         for name, value in utils.get_per_class_metrics(
             v, self.label_map, metrics=self.per_class_metrics):
@@ -175,5 +194,6 @@ class Evaluator(eval_builder.EvaluatorBase):
       if (k in ["strata_binary_confusion_matrix", "strata_confusion_matrix"]
           and self.per_class_metrics):
         for name, value in utils.get_stratified_metrics(
-            v, self.strata_weights):
+            v, self.strata_weights,
+            exclude_background_class=self.exclude_background_class):
           yield (name, value)

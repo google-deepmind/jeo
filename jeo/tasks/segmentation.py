@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -89,11 +89,21 @@ class SegmentationTask(task_builder.TaskBase):
       logits, _ = model_outputs  # pytype: disable=bad-unpacking
       predictions = jnp.argmax(logits, axis=-1)
       probs = jax.nn.softmax(logits)
+      one_hot = jax.nn.one_hot(predictions, num_classes=probs.shape[-1])
+      # prediction_stats is a per-class occurrence count. It's used for
+      # analyzing inference results on a global scale.
+      # They are computed here (on TPU) for performance reasons, so that we do
+      # not need large large array computations on CPUs.
+      prediction_stats = jnp.sum(one_hot, axis=range(1, len(one_hot.shape) - 1))
       if self.discrete_infer_probs:
         probs = (250 * probs).astype(jnp.uint8)
-      if self.exclude_background_class and probs.shape[-1] == 3:
-        probs = probs[..., -1:]
-      return {"predictions": predictions, "probs": probs}
+      if self.exclude_background_class:
+        probs = probs[..., 1:]
+      return {
+          "predictions": predictions,
+          "probs": probs,
+          "prediction_stats": prediction_stats,
+      }
 
     return fn
 
@@ -222,6 +232,6 @@ def _get_weights(
 
   if exclude_background:
     if labels.shape == logits.shape:
-      labels = labels.argmax(-1)
+      labels = labels.argmax(-1)  # Also works for multi-hot labels.
     weights *= (labels > 0).astype("float32")
   return weights

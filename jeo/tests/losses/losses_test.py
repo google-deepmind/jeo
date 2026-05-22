@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ jax.config.update("jax_threefry_partitionable", False)
 # Loss functions that expect labels to be one-hot encoded. All other loss
 # functions expect labels to be one dim less than logits.
 EXPECT_ONE_HOT_LABELS = ("sigmoid_xent", "softmax_xent",
-                         "softmax_focal_loss")
+                         "softmax_focal_loss", "partial_label_loss")
 
 
 def random_binary_mask(rng, shape, probability):
@@ -473,6 +473,43 @@ class LossesTest(parameterized.TestCase):
     out = losses.huber_loss(logits=pred, labels=true)
     self.assertAlmostEqual(out, expected)
 
+  def test_smape_loss(self):
+    logits = jnp.array([[1.0, 2.0], [0.0, 0.0]])
+    labels = jnp.array([[1.0, 1.0], [0.0, 1.0]])
+    # loss per element: [[0, 2/3], [0, 2]]
+    # loss per batch without reduction: [1/3, 1]
+    # loss with reduction: 2/3
+
+    # No reduction, no weights.
+    loss = losses.smape_loss(logits, labels, reduction=False)
+    np.testing.assert_array_almost_equal(loss, [1 / 3, 1.0], decimal=5)
+
+    # Reduction, no weights.
+    loss = losses.smape_loss(logits, labels, reduction=True)
+    self.assertAlmostEqual(loss, 2 / 3, places=5)
+
+    # Reduction, with weights.
+    weights = jnp.array([[1.0, 1.0], [1.0, 0.0]])
+    loss = losses.smape_loss(logits, labels, weights=weights, reduction=True)
+    # batch 0: loss items [0, 2/3], weights [1, 1], weighted loss
+    # = (0*1 + 2/3*1) / (1+1) = 1/3
+    # batch 1: loss items [0, 2], weights [1, 0], weighted loss
+    # = (0*1 + 2*0) / (1+0) = 0
+    # reduced loss = mean(1/3, 0) = 1/6
+    self.assertAlmostEqual(loss, 1 / 6, places=5)
+
+    # Perfect match.
+    loss = losses.smape_loss(jnp.array([1.0, 1.0]), jnp.array([1.0, 1.0]))
+    self.assertAlmostEqual(loss, 0.0, places=5)
+
+    # Both zero.
+    loss = losses.smape_loss(jnp.array([0.0, 0.0]), jnp.array([0.0, 0.0]))
+    self.assertAlmostEqual(loss, 0.0, places=5)
+
+    # Denominator zero before eps.
+    loss = losses.smape_loss(jnp.array([0.0]), jnp.array([0.0]), eps=1e-8)
+    self.assertAlmostEqual(loss, 0.0, places=5)
+
   @parameterized.parameters(
       itertools.product((True, False), ("l2_loss", "huber_loss"))
   )
@@ -505,6 +542,62 @@ class LossesTest(parameterized.TestCase):
     elif loss_name == "huber_loss":
       expected_loss = losses.huber_loss(logits, labels, weights=weights).mean()
       self.assertAlmostEqual(loss_reduced.item(), expected_loss, places=5)
+
+  def test_partial_label_loss(self):
+    # Logits for 4 classes, batch size 1, 1x1 spatial.
+    logits = jnp.array([[[[0., 1., 0., -1.]]]])  # B, H, W, C
+    # Probs: [0.19661194, 0.53444666, 0.19661194, 0.07232948]
+    # Test case 1: all labels are possible.
+    labels = jnp.array([[[[1, 1, 1, 1]]]])
+    loss = losses.partial_label_loss(logits=logits, labels=labels,
+                                     entropy_weight=0)
+    self.assertAlmostEqual(loss, 0., places=5)
+
+    # Test case 2: only one label is possible (class 1).
+    labels = jnp.array([[[[0, 1, 0, 0]]]])
+    loss = losses.partial_label_loss(logits=logits, labels=labels,
+                                     entropy_weight=0)
+    self.assertAlmostEqual(loss, -jnp.log(0.53444666), places=5)
+
+    # Test case 3: classes 0 and 1 are possible.
+    labels = jnp.array([[[[1, 1, 0, 0]]]])
+    loss = losses.partial_label_loss(logits=logits, labels=labels,
+                                     entropy_weight=0)
+    # p_0 + p_1 = 0.19661194 + 0.53444666 = 0.7310586
+    self.assertAlmostEqual(loss, -jnp.log(0.7310586), places=5)
+
+  def test_partial_label_loss_no_reduction(self):
+    logits = jnp.array([[0., 1.], [1., 0.]])
+    labels = jnp.array([[0, 1], [1, 1]])
+    loss = losses.partial_label_loss(logits=logits, labels=labels,
+                                     reduction=False, entropy_weight=0)
+    # 1st sample: S={1}, p_S=e^1/(e^0+e^1)=0.731, l1=-log(0.731)=0.313
+    # 2nd sample: S={0,1}, p_S=1, l2=-log(1)=0.
+    np.testing.assert_array_almost_equal(loss, [0.3132616, 0.], decimal=5)
+
+  def test_sigmoid_xent_zero_weights_gradients(self):
+    b, h, w = 2, 12, 12
+    labels = jnp.zeros((b, h, w))
+    logits = jnp.ones((b, h, w)) * 10.0
+    weights = jnp.zeros((b, h, w))
+
+    def loss_fn(w_arg):
+      return losses.sigmoid_xent(logits=logits, labels=labels, weights=w_arg)
+
+    grad = jax.grad(loss_fn)(weights)
+    self.assertTrue(jnp.isfinite(grad).all())
+
+  def test_huber_loss_zero_weights_gradients(self):
+    b, h, w, c = 2, 12, 12, 3
+    labels = jnp.zeros((b, h, w, c))
+    logits = jnp.ones((b, h, w, c)) * 10.0
+    weights = jnp.zeros((b, h, w))
+
+    def loss_fn(w_arg):
+      return losses.huber_loss(logits=logits, labels=labels, weights=w_arg)
+
+    grad = jax.grad(loss_fn)(weights)
+    self.assertTrue(jnp.isfinite(grad).all())
 
 
 if __name__ == "__main__":

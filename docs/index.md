@@ -1,26 +1,21 @@
 # Welcome to Jeo
 
 <div style="text-align: left">
-<img align="right" src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_1.png" width="100">
+<img align="right" src="images/jeo_logo_blue.png" width="100">
 </div>
 
 <div style="
-  background-color: transparent;
-  padding: 5px;
+  background-color: #01579b;
+  padding: 12px 20px;
   text-align: center;
-  color:rgb(66, 66, 66);
+  color: white;
   font-weight: bold;
-  font-size: 1.5em;
-  font-style: italic;
-  margin-left: auto;
-  margin-right: auto;
-  width: fit-content;
+  font-size: 1.2em;
+  border-radius: 8px;
+  margin-bottom: 16px;
 ">
-  Jax library to support machine learning research for remote sensing and Earth
-  observation.
+  Geospatial ML — from satellite imagery to trained models.
 </div>
-
-<br>
 
 <div class="mdx-hero__content">
   <a href="https://github.com/google-deepmind/jeo" class="md-button">
@@ -30,56 +25,82 @@
 
 ---
 
-## Overview
+## What is Jeo?
 
-Jeo is a specialized open source framework developed by Google DeepMind that
-accelerates machine learning for geospatial remote sensing and earth observation
-(EO) tasks. It uses [JAX](https://github.com/google/jax) and
-[Flax](https://github.com/google/flax) for high-performance model training on
-large geospatial datasets.
+Jeo is an open source framework developed by Google DeepMind for **machine
+learning on geospatial remote sensing and Earth observation (EO) data**. It uses
+[JAX](https://github.com/google/jax) and
+[Flax](https://github.com/google/flax) for high-performance model training and
+inference on large-scale geospatial datasets.
 
-Jeo is tailored to the characteristics of geospatial datasets to help in the
-development of models that can operate at scale. Jeo is primarily intended for
-researchers and developers actively working in fields such as geospatial
+Jeo is primarily intended for researchers and developers working in geospatial
 analysis, remote sensing, environmental science, and sustainability modelling.
 
-To access Jeo, visit [the GitHub repository](https://github.com/google-deepmind/jeo).
+## Where to Start
+
+| Your Goal | Go To |
+|-----------|-------|
+| **🌍 New to Jeo?** Complete end-to-end tutorial | [Starter Tutorial](starter.md) |
+| **⚙️ Understand configs** and how to write them | [Configs](configs.md) |
+| **🚀 Launch an experiment** on XManager or locally | [Launching](launching.md) |
+| **📦 Start a new project** from scratch | [New Project Guide](new_project.md) |
+| **🔧 Troubleshooting** common errors | [FAQ](faq.md) |
+
+## Documentation
+
+### Getting Started
+
+-   **[Starter Tutorial](starter.md)** — A hands-on, phase-by-phase walkthrough
+    using a real dataset (GlobalGeoTree). Covers the full pipeline from data
+    discovery through GeeFlow export, model training, and evaluation.
+
+### Core Concepts
+
+-   **[Configs](configs.md)** — Config system, custom modules, duration specs,
+    sweeps, Vizier integration, and loading pretrained models.
+-   **[Models](models.md)** — Model architectures, input/output conventions,
+    weight loading, and module resolution.
+-   **[Tasks & Losses](tasks.md)** — TaskBase interface, loss functions, and
+    available task types.
+-   **[Datasets](datasets.md)** — TFDS datasets, custom loaders, and GeeFlow
+    integration.
+-   **[Preprocessing](pp.md)** — The pipe-based preprocessing grammar and
+    available operations.
+-   **[Evaluators](evaluators.md)** — Evaluator interface, metrics, Lumascope
+    visualization.
+
+### Guides
+
+### Reference
+
+-   **[Conventions & Style](conventions.md)** — Coding conventions, abbreviations,
+    config style guide, and design principles.
+-   **[FAQ & Troubleshooting](faq.md)** — Common errors, memory limits, GPU OOM,
+    GeeFlow authentication, and debugging tips.
 
 ## Design
 
-Jeo code structure is inspired by
+Jeo's code structure is inspired by
 [Big Vision](https://github.com/google-research/big_vision) and
-[Scenic](https://github.com/google-research/scenic), and it builds upon the
-following:
+[Scenic](https://github.com/google-research/scenic), and builds upon:
 
--   **[JAX](https://github.com/google/jax)**: provides the engine for
-    high-performance computation.
--   **[Flax](https://github.com/google/flax)**: offers tools for building neural
-    network models.
--   **[`tf.data`](https://www.tensorflow.org/guide/data)**: manages data input
+-   **[JAX](https://github.com/google/jax)** — High-performance computation
+    engine.
+-   **[Flax](https://github.com/google/flax)** — Neural network building tools.
+-   **[`tf.data`](https://www.tensorflow.org/guide/data)** — Data input
     pipelines.
--   **[GeeFlow](https://github.com/google-deepmind/geeflow)**: connects the
-    framework to [Google Earth Engine](https://earthengine.google.com/)'s data
-    resources.
+-   **[GeeFlow](https://github.com/google-deepmind/geeflow)** — Connects to
+    [Google Earth Engine](https://earthengine.google.com/)'s satellite data
+    resources for large-scale dataset generation.
 
-Familiarity with these components can aid in customizing and extending Jeo for
-specific research needs. By using JAX and Flax, Jeo inherently benefits from
-features like automatic differentiation, code compilation (XLA), and seamless
-execution across various hardware accelerators, including CPUs, GPUs, and
+By using JAX and Flax, Jeo benefits from automatic differentiation, XLA
+compilation, and seamless execution across CPUs, GPUs, and
 [Google Cloud TPUs](https://cloud.google.com/blog/products/compute/introducing-cloud-tpu-vms).
-This focus on performance is particularly relevant for earth observation tasks,
+This focus on performance is particularly relevant for Earth observation tasks,
 which often involve processing massive datasets derived from satellite imagery
 and other remote sensing platforms.
 
-Furthermore, Jeo's effective integration with libraries like GeeFlow enables
-efficient construction of large-scale datasets directly from Google Earth Engine
-(GEE), streamlining workflows in the GEE ecosystem. This combination makes Jeo a
-potent tool for researchers pushing the boundaries of AI applications in
-understanding and modelling our planet for research and sustainability projects.
-
 ## Cite Jeo
-
-Cite the Jeo codebase as follows:
 
 ```  sh
 @software{jeo2025:github,

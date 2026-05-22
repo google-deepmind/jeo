@@ -1,4 +1,4 @@
-# Copyright 2025 DeepMind Technologies Limited.
+# Copyright 2026 DeepMind Technologies Limited.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,15 +13,17 @@
 # limitations under the License.
 
 """Input pipeline (initially based on BV)."""
+import collections
 from collections.abc import Callable, Iterator, Sequence
 import functools
+import itertools
 import math
 import multiprocessing.pool
+import time
 from typing import Any
 
 from absl import logging
 import einops
-import flax.jax_utils as flax_utils
 import jax
 from jeo import train_utils
 from jeo.pp import pp_builder
@@ -31,6 +33,7 @@ import jeo.pp.bv_ops  # pylint: disable=unused-import
 import jeo.pp.image_ops  # pylint: disable=unused-import
 import jeo.pp.pp_ops  # pylint: disable=unused-import
 import jeo.pp.rand_det_ops  # pylint: disable=unused-import
+from kauldron.utils.sharding_utils import sharding  # pylint: disable=g-importing-member
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
@@ -65,6 +68,9 @@ def _get_filter_fn(filter_fn: FilterFn | str | None) -> FilterFn | None:
     assert pos >= 0
     key = filter_fn[:pos]
     val = filter_fn[pos + 1:]
+    if key.startswith("key:"):
+      key = key[4:]
+      return lambda x: x[key] == x[val]
     if key.startswith("int:"):
       key = key[4:]
       val = int(val)
@@ -143,6 +149,9 @@ def _get_single_ds(
     skip_decode: Sequence[str] = ("image",),
     download_and_prepare: bool = False,
     interleave_cycle_length: int | None = None,
+    interleave_block_length: int | None = None,
+    num_parallel_calls_for_interleave_files: int | None = None,
+    num_parallel_calls_for_decode: int | None = None,
     wid: int | None = None,
     data_service_address: str | None = None,
     data_service_max_outstanding_requests: int | None = None,
@@ -177,6 +186,10 @@ def _get_single_ds(
     skip_decode: List of features to skip decoding.
     download_and_prepare: Download and prepare TFDS dataset.
     interleave_cycle_length: Interleave cycle length.
+    interleave_block_length: Interleave block length.
+    num_parallel_calls_for_interleave_files: Number of parallel calls for
+      interleave files.
+    num_parallel_calls_for_decode: Number of parallel calls for decode.
     wid: XManager work unit id (used for data service).
     data_service_address: If using tf data service, this should be set to the
       address of the service.
@@ -209,19 +222,27 @@ def _get_single_ds(
         data_dir=data_dir, keep_keys=keep_keys, **kwargs)
   else:
     data, _ = get_dataset_tfds(
-        dataset=dataset, split=split, shuffle_files=train,
-        data_dir=data_dir, skip_decode=skip_decode,
+        dataset=dataset,
+        split=split,
+        shuffle_files=train,
+        data_dir=data_dir,
+        skip_decode=skip_decode,
         download_and_prepare=download_and_prepare,
         interleave_cycle_length=interleave_cycle_length,
-        keep_keys=keep_keys)
+        keep_keys=keep_keys,
+        interleave_block_length=interleave_block_length,
+        num_parallel_calls_for_interleave_files=num_parallel_calls_for_interleave_files,
+        num_parallel_calls_for_decode=num_parallel_calls_for_decode,
+    )
 
   if not callable(preprocess_fn):
-    preprocess_fn = pp_builder.get_preprocess_fn(preprocess_fn, log_steps=True)
+    preprocess_fn = pp_builder.get_preprocess_fn(preprocess_fn, log_steps=True,
+                                                 dataset=dataset, split=split)
   if not callable(batch_preprocess_fn):
     batch_preprocess_fn = pp_builder.get_preprocess_fn(
-        batch_preprocess_fn, log_steps=True
+        batch_preprocess_fn, log_steps=True, dataset=dataset, split=split
     )
-  data = _add_tpu_host_options(data)
+  data = _add_tpu_host_options(data, **kwargs)
 
   num_examples_multiplier = 1
   if split_dataset_args:
@@ -274,14 +295,11 @@ def _get_single_ds(
     if data_service_address:
       data = data.apply(
           tf.data.experimental.service.distribute(
-              # TODO: DYNAMIC sharding would be more correct here
-              # as it would mix the data better. But currently it doesn't work
-              # with the rest of the jeo data pipeline, giving this issue:
-              # (internal link)
-              processing_mode=tf.data.experimental.service.ShardingPolicy.OFF,
+              processing_mode=tf.data.experimental.service.ShardingPolicy.DYNAMIC,
               service=data_service_address,
               job_name=f"train_data/{wid}/{dataset}/{split}".replace(
-                  ":", "_").replace(".", "_"),
+                  ":", "_"
+              ).replace(".", "_"),
               max_outstanding_requests=data_service_max_outstanding_requests,
           )
       )
@@ -343,6 +361,7 @@ def _get_single_ds(
 def _get_mixture_ds(
     dataset: Sequence[str],
     split: str | Sequence[str],
+    preprocess_fn: PreprocessFn | Sequence[PreprocessFn],
     batch_size: int,
     dataset_weights: Sequence[float] | None = None,
     prefetch: int = 2,
@@ -352,6 +371,7 @@ def _get_mixture_ds(
   Args:
     dataset: Name of the dataset (or a list).
     split: Name of the split (or a list).
+    preprocess_fn: Preprocessing function (or a list).
     batch_size: Batch size.
     dataset_weights: Weights of each dataset (sample) or None if just weighting
       by dataset sizes (each sample from any dataset has the same
@@ -366,39 +386,38 @@ def _get_mixture_ds(
   assert kwargs["train"]
   if isinstance(split, str):
     split = [split] * len(dataset)
+  # NOTE: Checking for isinstance(preprocess_fn, PreprocessFn) cases a
+  # "TypeError: isinstance() argument 2 cannot be a parameterized generic"
+  # failure.
+  if isinstance(preprocess_fn, Callable) or isinstance(preprocess_fn, str):
+    preprocess_fn = [preprocess_fn] * len(dataset)
   assert len(dataset) == len(split)
   if dataset_weights is None:
     dataset_weights = [1] * len(dataset)
   assert len(dataset_weights) == len(dataset)
 
-  names, datasets, totals = [], [], []
-  pool = multiprocessing.pool.ThreadPool(len(dataset))
+  def _make(dataset_and_split_and_pp):
+    ds, total = _get_single_ds(
+        *dataset_and_split_and_pp, batch_size=0, prefetch=0, **kwargs
+    )
+    return f"{dataset}:{split}", ds, total
 
-  def _make(dataset_and_split):
-    dataset, split = dataset_and_split
-    ds, total = _get_single_ds(dataset=dataset,
-                               split=split,
-                               batch_size=0,
-                               prefetch=0,
-                               **kwargs)
-    return f"{dataset}:{split}", ds, total  # pylint: disable=bad-whitespace
+  with multiprocessing.pool.ThreadPool(len(dataset)) as pool:
+    results = pool.map(_make, zip(dataset, split, preprocess_fn))
+  names, datasets, totals = zip(*results)
 
-  for name, dataset, total in pool.map(
-      _make, ((ds, sp) for ds, sp in zip(dataset, split))):
-    names.append(name)
-    datasets.append(dataset)
-    totals.append(total)
-
-  totals = [
-      total * weight for total, weight in zip(totals, dataset_weights)]
+  totals = [total * weight for total, weight in zip(totals, dataset_weights)]
 
   # Normalize the weights such that they sum up to 1.
   weights = [x / sum(totals) for x in totals]
 
   logging.info(
-      "NOTE: Total dataset mix size: %d\nContributions:\n%s", sum(totals),
-      "\n".join(f"{ds}: {n} ({w * 100:.2g}%)"  # pylint: disable=bad-whitespace
-                for ds, n, w in zip(names, totals, weights))
+      "NOTE: Total dataset mix size: %d\nContributions:\n%s",
+      sum(totals),
+      "\n".join(
+          f"{ds}: {n} ({w * 100:.2g}%)"
+          for ds, n, w in zip(names, totals, weights)
+      ),
   )
 
   train_ds = tf.data.Dataset.sample_from_datasets(
@@ -427,28 +446,96 @@ def get_data(
   return _get_mixture_ds(dataset, **kwargs)
 
 
+def to_numpy(x):
+  if hasattr(x, "_numpy"):
+    # _numpy() call avoids redundant copy when converting tf.Tensor to numpy.
+    return x._numpy()  # pylint: disable=protected-access
+  else:
+    # Transforms x into read-only numpy array without copy if possible, see:
+    # https://github.com/tensorflow/tensorflow/issues/33254#issuecomment-542379165
+    x = np.asarray(memoryview(x))
+  return x
+
+
+def prefetch_iterator(it, size: int = 0):
+  """Runs iterator `it` ahead for `size` steps. Adapted from flax."""
+  # (internal link)/py/flax/jax_utils.py?l=123
+  queue = collections.deque()
+
+  def enqueue(n_steps):  # Enqueues *up to* `n` elements from the iterator.
+    for data in itertools.islice(it, n_steps):
+      queue.append(data)
+
+  enqueue(size)  # Fill up the buffer.
+  while queue:
+    yield queue.popleft()
+    enqueue(1)
+
+
 def start_input_pipeline(
     data: tf.data.Dataset, n_prefetch: int, shard: bool = True
 ) -> Iterator[Any]:
-  """Return iterator with prefetching and numpy conversion."""
-  def to_numpy(x):
-    if hasattr(x, "_numpy"):
-      # _numpy() call avoids redundant copy when converting tf.Tensor to numpy.
-      return x._numpy()  # pylint: disable=protected-access
-    else:
-      # Transforms x into read-only numpy array without copy if possible, see:
-      # https://github.com/tensorflow/tensorflow/issues/33254#issuecomment-542379165
-      x = np.asarray(memoryview(x))
+  """Return iterator with prefetching and numpy conversion for pmap."""
+  def fn(x):
+    x = to_numpy(x)
+    if shard:
+      d = jax.local_devices()
+      x = einops.rearrange(x, "(d b) ... -> d b ...", d=len(d))
+      if n_prefetch:
+        mesh = jax.sharding.Mesh(np.array(d), ("_device_put_sharded",))
+        sharding = jax.NamedSharding(mesh, jax.P("_device_put_sharded"))
+        x = jax.device_put(np.stack(list(x)), sharding)
     return x
+  it = (jax.tree.map(fn, x) for x in iter(data))
+  return prefetch_iterator(it, n_prefetch) if n_prefetch else it
 
-  it = (jax.tree.map(to_numpy, b) for b in iter(data))  # pylint: disable=protected-access
-  if shard:
-    d = jax.local_device_count()
-    shard_fn = lambda x: einops.rearrange(x, "(d b) ... -> d b ...", d=d)
-    it = (jax.tree.map(shard_fn, x) for x in it)
-  if shard and n_prefetch:  # Only works for pmap.
-    it = flax_utils.prefetch_to_device(it, n_prefetch)
-  return it
+
+def _retrying_iter(ds: tf.data.Dataset, map_fn, max_retries: int = 10):
+  """Iterator that retries on tf.data service errors."""
+  ds_iter = iter(ds)
+  retries = 0
+  while True:
+    try:
+      batch = next(ds_iter)
+      retries = 0
+      yield map_fn(batch)
+    except StopIteration:
+      return
+    except (tf.errors.NotFoundError, tf.errors.UnavailableError) as e:
+      retries += 1
+      if retries > max_retries:
+        raise
+      wait = min(2**retries, 60)
+      logging.warning(
+          "tf.data service error (attempt %d/%d), retrying in %ds: %s",
+          retries,
+          max_retries,
+          wait,
+          e,
+      )
+      time.sleep(wait)
+      ds_iter = iter(ds)
+
+
+def get_iter(ds: tf.data.Dataset, n_prefetch: int, retry: bool = False):
+  """Returns numpy iterator with optionally prefetching shards to devices.
+
+  Args:
+    ds: tf.data.Dataset to iterate over.
+    n_prefetch: Number of batches to prefetch (0 means no prefetching).
+    retry: If True, use retrying iterator that handles tf.data service
+      errors with retries. Defaults to False for simpler workflows.
+
+  Returns:
+    Iterator over numpy arrays, sharded and optionally prefetched to devices.
+  """
+  def _to_numpy_and_shard(x):
+    x = to_numpy(x)
+    return sharding.device_put(x, sharding.FIRST_DIM)
+
+  map_fn = lambda b: jax.tree.map(_to_numpy_and_shard, b)
+  it = _retrying_iter(ds, map_fn) if retry else map(map_fn, iter(ds))
+  return prefetch_iterator(it, n_prefetch) if n_prefetch else it
 
 
 @functools.cache
@@ -468,6 +555,9 @@ def get_dataset_tfds(
     keep_keys: Sequence[str] | None = None,
     download_and_prepare: bool = False,
     interleave_cycle_length: int | None = None,
+    interleave_block_length: int | None = None,
+    num_parallel_calls_for_interleave_files: int | None = None,
+    num_parallel_calls_for_decode: int | None = None,
 ) -> tuple[tf.data.Dataset, tfds.core.DatasetBuilder]:
   """Returns TFDS dataset split."""
   builder = get_builder(dataset, data_dir)
@@ -488,10 +578,18 @@ def get_dataset_tfds(
       try_autocache=False,  # We control this, esp. for few-shot.
       add_tfds_id=True,
   )
+  # NOTE: Value "None" is different from the default value "MISSING". So we
+  # only overwrite it if it is explicitly set.
   if interleave_cycle_length:
-    # NOTE: Value "None" is different from the default value "MISSING". So we
-    # only overwrite it if it is explicitly set.
     read_config.interleave_cycle_length = interleave_cycle_length
+  if interleave_block_length:
+    read_config.interleave_block_length = interleave_block_length
+  if num_parallel_calls_for_interleave_files:
+    read_config.num_parallel_calls_for_interleave_files = (
+        num_parallel_calls_for_interleave_files
+    )
+  if num_parallel_calls_for_decode:
+    read_config.num_parallel_calls_for_decode = num_parallel_calls_for_decode
   # Each host is responsible for a fixed subset of data
   return builder.as_dataset(
       split=split,
@@ -529,10 +627,26 @@ def _add_internal_fields(pp_fn: PreprocessFn) -> PreprocessFn:
 
 
 # Forked from third_party/py/big_vision/input_pipeline.py
-def _add_tpu_host_options(data: tf.data.Dataset) -> tf.data.Dataset:
+def _add_tpu_host_options(
+    data: tf.data.Dataset,
+    **kwargs: Any,
+) -> tf.data.Dataset:
+  """Sets some defaults for tf.data options.
+
+  Args:
+    data: The input tf.data.Dataset.
+    **kwargs: Optional arguments to override default options.
+
+  Returns:
+    The tf.data.Dataset with updated options.
+  """
   options = tf.data.Options()
-  options.threading.private_threadpool_size = 48
-  options.threading.max_intra_op_parallelism = 1
+  options.threading.private_threadpool_size = kwargs.get(
+      "private_threadpool_size", 48
+  )
+  options.threading.max_intra_op_parallelism = kwargs.get(
+      "max_intra_op_parallelism", 0
+  )
 
   # Stop a whole bunch of magic stuff that eats up all RAM:
   options.experimental_optimization.inject_prefetch = False

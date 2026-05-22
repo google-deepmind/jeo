@@ -48,7 +48,7 @@ theme:
     scheme: default # Or 'slate' for dark mode
     primary: 'black'
     accent: 'blue'
-  logo: https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_1.png
+  logo: https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_blue.png
   # favicon: 'assets/favicon.ico' # Requires creating docs/assets/favicon.ico
 
 # Navigation (Basic example - will be expanded later)
