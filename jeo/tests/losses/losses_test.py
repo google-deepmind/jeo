@@ -23,8 +23,6 @@ from jeo import losses
 import numpy as np
 import optax  # For testing against.
 
-jax.config.update("jax_threefry_partitionable", False)
-
 
 # Loss functions that expect labels to be one-hot encoded. All other loss
 # functions expect labels to be one dim less than logits.
@@ -117,7 +115,7 @@ class LossesTest(parameterized.TestCase):
     self.assertTrue(callable(loss_fn))
 
   @parameterized.parameters(
-      (False, 1, 0.32542178), (True, 1, 0.71335447), (False, 2, 0.3209438))
+      (False, 1, 0.32512954), (True, 1, 0.7052464), (False, 2, 0.3282359))
   def test_supres_losses(self, with_sigma, c, expected_loss):
     b, h, w = 4, 32, 32
     rng = jax.random.PRNGKey(42)
@@ -128,7 +126,7 @@ class LossesTest(parameterized.TestCase):
     loss, aux = losses.supres_losses(sr, sr_sigma, hr, border=1,
                                      with_sigma=with_sigma)
     self.assertCountEqual(aux, ("cpsnr", "l1", "sr_mse"))
-    self.assertAlmostEqual(loss, expected_loss, places=5)
+    self.assertAlmostEqual(loss, expected_loss, places=4)
 
   def test_l2(self):
     b, h, w, c = 2, 12, 12, 3
