@@ -64,7 +64,8 @@ class TrainTest(absltest.TestCase):
     train_lib.FLAGS.cleanup = False
     train_lib.FLAGS.config = config
     train_lib.FLAGS.workdir = self.workdir
-    train_lib.FLAGS.xm_runlocal = True
+    if hasattr(train_lib.FLAGS, "xm_runlocal"):
+      train_lib.FLAGS.xm_runlocal = True
     with mock.patch.object(input_pipeline, "get_data", mocked_get_data):
       with mock.patch.object(
           input_pipeline, "get_num_examples", mocked_get_num_examples
@@ -77,7 +78,8 @@ class TrainTest(absltest.TestCase):
     train_lib.FLAGS.cleanup = False
     train_lib.FLAGS.config = config
     train_lib.FLAGS.workdir = self.workdir
-    train_lib.FLAGS.xm_runlocal = True
+    if hasattr(train_lib.FLAGS, "xm_runlocal"):
+      train_lib.FLAGS.xm_runlocal = True
     with mock.patch.object(input_pipeline, "get_data", mocked_get_data):
       with mock.patch.object(input_pipeline, "get_num_examples",
                              mocked_get_num_examples):

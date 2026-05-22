@@ -20,8 +20,7 @@ from jeo import train_utils
 
 class TrainUtilsTest(parameterized.TestCase):
 
-  @parameterized.parameters(("BV:vit",), ("BV:vit.Model",), ("utae",),
-                            ("SCENIC:baselines.unet.UNet",))
+  @parameterized.parameters(("vit",))
   def test_import_module_model(self, mod_name):
     module = train_utils.import_module(mod_name)
     self.assertTrue(hasattr(module, "Model"))

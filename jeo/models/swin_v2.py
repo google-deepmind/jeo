@@ -37,7 +37,7 @@ LayerNorm = functools.partial(
     epsilon=1e-4,
     # We add a small bias to the LayerNorm to improve the stability of training
     # for dataset with low magnitude inputs. LN gradients would otherwise
-    # explode (see (internal link) for details).
+    # explode due to division by extremely small standard deviations.
     bias_init=nn.initializers.truncated_normal(stddev=1e-2),
 )
 Dense = functools.partial(nn.Dense, bias_init=nn.initializers.zeros)

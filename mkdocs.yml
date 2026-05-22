@@ -51,9 +51,25 @@ theme:
   logo: https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_blue.png
   # favicon: 'assets/favicon.ico' # Requires creating docs/assets/favicon.ico
 
-# Navigation (Basic example - will be expanded later)
+# Navigation
 nav:
   - Welcome to Jeo: index.md
+  - 🌱 Getting Started:
+      - Starter Tutorial: starter.md
+      - Starting a New Project: new_project.md
+  - 📖 Core Concepts:
+      - Configs: configs.md
+      - Models: models.md
+      - Tasks & Losses: tasks.md
+      - Datasets: datasets.md
+      - Evaluators: evaluators.md
+      - Preprocessing: pp.md
+  - 🚀 Guides:
+      - Launching Experiments: launching.md
+      - Colab Runtimes: colabs.md
+      - Conventions: conventions.md
+  - ❓ Reference:
+      - FAQ & Troubleshooting: faq.md
 
 # Markdown Extensions (Optional - useful for advanced formatting)
 # Extensions
