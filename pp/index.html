@@ -1,0 +1,2082 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for Jeo: Model training and inference for geospatial remote sensing and Earth Observation in JAX.">
+      
+      
+        <meta name="author" content="Google DeepMind">
+      
+      
+        <link rel="canonical" href="https://google-deepmind.github.io/jeo/pp/">
+      
+      
+        <link rel="prev" href="../evaluators/">
+      
+      
+        <link rel="next" href="../launching/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Preprocessing - Jeo Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#preprocessing-operations-in-jeo" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Jeo Documentation" class="md-header__button md-logo" aria-label="Jeo Documentation" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_blue.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Jeo Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Preprocessing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/google-deepmind/jeo" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    google-deepmind/jeo
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Welcome to Jeo
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../starter/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  🌱 Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../configs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  📖 Core Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../launching/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  🚀 Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../faq/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ❓ Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Jeo Documentation" class="md-nav__button md-logo" aria-label="Jeo Documentation" data-md-component="logo">
+      
+  <img src="https://raw.githubusercontent.com/google-deepmind/jeo/main/docs/images/jeo_logo_blue.png" alt="logo">
+
+    </a>
+    Jeo Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/google-deepmind/jeo" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    google-deepmind/jeo
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Welcome to Jeo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🌱 Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🌱 Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../starter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Starter Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../new_project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Starting a New Project
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    📖 Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    📖 Core Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tasks & Losses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../datasets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Datasets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evaluators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preprocessing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#preprocessing-spec-construction-grammar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preprocessing Spec Construction &amp; Grammar
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Preprocessing Spec Construction &amp; Grammar">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#loading-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Loading Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decorators-and-custom-ops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decorators and Custom Ops
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deterministic-random-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deterministic Random Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best Practices
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available Operations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available Operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-operations-pp_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Operations (pp_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#big-vision-forked-operations-bv_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Big Vision Forked Operations (bv_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deterministic-random-operations-rand_det_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deterministic Random Operations (rand_det_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#satellite-specific-operations-sat_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Satellite Specific Operations (sat_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#image-operations-image_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Operations (image_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#internal-specialized-operations-internal_opspy-decode_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internal &amp; Specialized Operations (internal_ops.py, decode_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    🚀 Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    🚀 Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../launching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching Experiments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../colabs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Colab Runtimes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conventions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ❓ Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ❓ Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ & Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#preprocessing-spec-construction-grammar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preprocessing Spec Construction &amp; Grammar
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Preprocessing Spec Construction &amp; Grammar">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#loading-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Loading Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decorators-and-custom-ops" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decorators and Custom Ops
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deterministic-random-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deterministic Random Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best Practices
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#available-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Available Operations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Available Operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basic-operations-pp_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Operations (pp_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#big-vision-forked-operations-bv_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Big Vision Forked Operations (bv_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deterministic-random-operations-rand_det_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deterministic Random Operations (rand_det_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#satellite-specific-operations-sat_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Satellite Specific Operations (sat_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#image-operations-image_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Operations (image_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#internal-specialized-operations-internal_opspy-decode_opspy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internal &amp; Specialized Operations (internal_ops.py, decode_ops.py)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/google-deepmind/jeo/edit/master/docs/pp.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/google-deepmind/jeo/raw/master/docs/pp.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
+
+
+<h1 id="preprocessing-operations-in-jeo">Preprocessing Operations in Jeo<a class="headerlink" href="#preprocessing-operations-in-jeo" title="Permanent link">&para;</a></h1>
+<p>This page lists the available preprocessing operations in <code>jeo/pp</code> that can
+be used to construct preprocessing pipelines, as well as details on the
+mini-language used to specify them.</p>
+<h2 id="preprocessing-spec-construction-grammar">Preprocessing Spec Construction &amp; Grammar<a class="headerlink" href="#preprocessing-spec-construction-grammar" title="Permanent link">&para;</a></h2>
+<p>The preprocessing pipeline is described by a string mini-language, where
+operations are separated by the pipe (<code>|</code>) character. The grammar is as
+follows:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>fn1|fn2(arg1, arg2, ...)|fn3(kwarg1=val1, kwarg2=val2)|...
+</span></code></pre></div>
+<ul>
+<li>Operations are applied sequentially to the data dictionary.</li>
+<li>Each operation can optionally have one or more arguments (positional or keyword).</li>
+<li>Arguments are parsed using Python's <code>ast.literal_eval</code>, so you can use
+  Python literals like strings, numbers, lists, tuples, and dicts.</li>
+<li><strong>Parentheses can be dropped</strong> if no arguments are given (e.g., <code>decode|flip_lr</code>).</li>
+<li>The output of the preprocessing function is always a dictionary of tensors.</li>
+</ul>
+<p>Example:
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">config</span><span class="o">.</span><span class="n">pp_train</span> <span class="o">=</span> <span class="s2">&quot;decode|resize(224)|value_range(-1, 1)|keep(&#39;image&#39;, &#39;labels&#39;)&quot;</span>
+</span></code></pre></div></p>
+<h3 id="loading-operations">Loading Operations<a class="headerlink" href="#loading-operations" title="Permanent link">&para;</a></h3>
+<p>By default, Jeo automatically loads preprocessing ops from <a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/"><code>jeo/pp/</code></a>
+(specifically imported in <a href="https://github.com/google-deepmind/jeo/tree/main/jeo/input_pipeline.py"><code>jeo/input_pipeline.py</code></a>).</p>
+<p>If you need to use ops from other modules (e.g., project-specific ops or
+big_vision ops), you must include them in the config's <code>pp_module</code> or
+<code>pp_modules</code> list:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">config</span><span class="o">.</span><span class="n">pp_modules</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">&quot;proj.forty.pp_ops&quot;</span><span class="p">,</span>  <span class="c1"># Loads from jeo/proj/forty/pp_ops.py</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="s2">&quot;proj.forestcast.pp_ops&quot;</span><span class="p">,</span>  <span class="c1"># Loads from jeo/proj/forestcast/pp_ops.py</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">]</span>
+</span></code></pre></div>
+<h3 id="decorators-and-custom-ops">Decorators and Custom Ops<a class="headerlink" href="#decorators-and-custom-ops" title="Permanent link">&para;</a></h3>
+<p>Many operations use the <code>@utils.InKeyOutKey</code> decorator.</p>
+<ul>
+<li>This decorator automatically extracts the feature specified by <code>key</code>,
+  <code>inkey</code>, or <code>outkey</code> (defaulting to <code>"image"</code>).</li>
+<li>The decorated function receives this feature directly (instead of the
+  whole dictionary) and returns the modified feature, which is then
+  automatically updated in the data dictionary.</li>
+</ul>
+<h3 id="deterministic-random-operations">Deterministic Random Operations<a class="headerlink" href="#deterministic-random-operations" title="Permanent link">&para;</a></h3>
+<p>For multi-modal or multi-temporal data, you often want to apply the <em>same</em>
+random transformation to multiple features (e.g., rotating both the image
+and the segmentation mask by the same random angle).
+Jeo follows the approach from the Big Vision UViM project:</p>
+<ol>
+<li><strong>Generate a 'named' random value feature first</strong> using <code>randu</code> or <code>randint</code>.</li>
+<li><strong>Apply deterministic operations</strong> based on that random feature across
+    the features of interest.</li>
+</ol>
+<p>Examples:</p>
+<ul>
+<li>Random flip and rotation applied to both 'image' and 'mask':</li>
+</ul>
+<p><code>"randu('flip_rot')|det_flip_rot(key='image')|det_flip_rot(key='mask')"</code>
+- Random crop:</p>
+<p><code>"randu('crop')|det_crop(128,key='image')|det_crop(128,key='mask')"</code></p>
+<p>Note: Check the specific op implementation in <a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/rand_det_ops.py"><code>pp/rand_det_ops.py</code></a> to see
+the default expected name of the random value key (e.g., <code>"crop"</code>, <code>"flip_rot"</code>,
+etc.).</p>
+<h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Always end with <code>keep(...)</code></strong>: It is highly recommended to end your
+  preprocessing pipeline with a <code>keep(...)</code> operation to drop all unused
+  keys. Leftover keys with incompatible types (like strings or ragged
+  tensors) can cause dtype errors in JAX during training.</li>
+</ul>
+<hr />
+<h2 id="available-operations">Available Operations<a class="headerlink" href="#available-operations" title="Permanent link">&para;</a></h2>
+<h3 id="basic-operations-pp_opspy">Basic Operations (<a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/pp_ops.py">pp_ops.py</a>)<a class="headerlink" href="#basic-operations-pp_opspy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Op Name</th>
+<th style="text-align: left;">Arguments</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>add_meta_as_channel</code></td>
+<td style="text-align: left;"><code>meta_key: str, to_key: str = "image"</code></td>
+<td style="text-align: left;">Appends scalar value as an additional channel.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cast</code></td>
+<td style="text-align: left;"><code>key: str, dtype: str = "int32"</code></td>
+<td style="text-align: left;">Casts a given feature to a given type.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>check_finite</code></td>
+<td style="text-align: left;"><code>keys: Sequence[str] \| None = None, msg: str = ""</code></td>
+<td style="text-align: left;">Checks for NaNs and infs in given keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>debug_assert_shapes</code></td>
+<td style="text-align: left;"><code>shapes: dict[str, Sequence[int]]</code></td>
+<td style="text-align: left;">Assert shapes for given keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ensure_4d</code></td>
+<td style="text-align: left;"><code>keys: Sequence[str] \| str, extra_axis: int = 0</code></td>
+<td style="text-align: left;">Ensures number of dimension for given key field is 4.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ensure_shape</code></td>
+<td style="text-align: left;"><code>shape: Sequence[int]</code></td>
+<td style="text-align: left;">Ensures shape for given key field (for debugging).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>expand_dim</code></td>
+<td style="text-align: left;"><code>*keys: Sequence[str], axis: int = 0</code></td>
+<td style="text-align: left;">Expands by one dimension at given axis.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>extract_channels</code></td>
+<td style="text-align: left;"><code>from_key: str, key_channels: dict, axis=-1</code></td>
+<td style="text-align: left;">Extracts channels to separate tensors.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>invert_bool</code></td>
+<td style="text-align: left;"><code>keys: str \| Sequence[str]</code></td>
+<td style="text-align: left;">Inverts boolean input values.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>jeo_concat</code></td>
+<td style="text-align: left;"><code>keys: Sequence[str], outkey="image", axis=-1, pop_origs=True, broadcast=False</code></td>
+<td style="text-align: left;">Concatenates images across a given axis.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>jeo_drop</code></td>
+<td style="text-align: left;"><code>keys: Sequence[str]</code></td>
+<td style="text-align: left;">Drops the given keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>jeo_keep</code></td>
+<td style="text-align: left;"><code>keys: Sequence[str]</code></td>
+<td style="text-align: left;">Keeps only the given keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max</code></td>
+<td style="text-align: left;"><code>*keys: Sequence[str], axis: int = 0, keepdims: bool = False</code></td>
+<td style="text-align: left;">Runs reduce_max on a given axis.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>reduce</code></td>
+<td style="text-align: left;"><code>keys: Sequence[str], outkey: str, reduction: str = "prod"</code></td>
+<td style="text-align: left;">Combines multiple features into one with a specified reduction.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>remap</code></td>
+<td style="text-align: left;"><code>mapping: dict, default_value: Any = 0</code></td>
+<td style="text-align: left;">Remapping values from a feature.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>remap_ints</code></td>
+<td style="text-align: left;"><code>mapping: list[int]</code></td>
+<td style="text-align: left;">Mapping from a set of integer labels to another set.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>rename</code></td>
+<td style="text-align: left;"><code>**kv_pairs: dict[str, str]</code></td>
+<td style="text-align: left;">Renames selected keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>select_channels</code></td>
+<td style="text-align: left;"><code>key_channels: int \| Sequence[int] \| dict, axis: int = -1</code></td>
+<td style="text-align: left;">Selects channels by index.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>select_channels_by_name</code></td>
+<td style="text-align: left;"><code>key: str, channels: Sequence[str], names: Sequence[str], axis=-1</code></td>
+<td style="text-align: left;">Selects channels by name.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>skai_concat</code></td>
+<td style="text-align: left;"><code>key1="pre_image_png", key2="post_image_png", outkey="image", axis=-1, pop_origs=True</code></td>
+<td style="text-align: left;">Concatenates images across a given axis.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>squeeze_dim</code></td>
+<td style="text-align: left;"><code>*keys: Sequence[str], axis: int = 0</code></td>
+<td style="text-align: left;">Squeezes by one dimension at given axis.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>string_to_int</code></td>
+<td style="text-align: left;"><code>key: str</code></td>
+<td style="text-align: left;">Converts string key to int.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>transpose</code></td>
+<td style="text-align: left;"><code>key: str, perm: Sequence[int]</code></td>
+<td style="text-align: left;">Transposes a given feature.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="big-vision-forked-operations-bv_opspy">Big Vision Forked Operations (<a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/bv_ops.py">bv_ops.py</a>)<a class="headerlink" href="#big-vision-forked-operations-bv_opspy" title="Permanent link">&para;</a></h3>
+<p>These ops are forked from the big_vision codebase.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Op Name</th>
+<th style="text-align: left;">Arguments</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>choice</code></td>
+<td style="text-align: left;"><code>n: int \| str = "single", inkey=None, outkey=None, key=None</code></td>
+<td style="text-align: left;">Chooses the same <code>n</code> random entries of all <code>keys</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>concat</code></td>
+<td style="text-align: left;"><code>inkeys: Sequence[str], outkey: str \| None = None, axis=-1</code></td>
+<td style="text-align: left;">Concatenates elements along some axis.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>copy</code></td>
+<td style="text-align: left;"><code>inkey: str, outkey: str</code></td>
+<td style="text-align: left;">Copies value of <code>inkey</code> into <code>outkey</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>drop</code></td>
+<td style="text-align: left;"><code>*keys: Sequence[str]</code></td>
+<td style="text-align: left;">Drops the given keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>flatten</code></td>
+<td style="text-align: left;">None</td>
+<td style="text-align: left;">Flattens the keys of data with separator <code>/</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>keep</code></td>
+<td style="text-align: left;"><code>*keys: Sequence[str]</code></td>
+<td style="text-align: left;">Keeps only the given keys.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>lookup</code></td>
+<td style="text-align: left;"><code>mapping: str, npzkey="fnames", sep: str \| None = None</code></td>
+<td style="text-align: left;">Map string to number using a file.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>onehot</code></td>
+<td style="text-align: left;"><code>depth: int, key="labels", key_result=None, multi=True, on=1.0, off=0.0</code></td>
+<td style="text-align: left;">One-hot encodes the input.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pad_to_shape</code></td>
+<td style="text-align: left;"><code>shape: Sequence[int], pad_value: int = 0, where: str = "after"</code></td>
+<td style="text-align: left;">Pads tensor to specified shape.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>rag_tensor</code></td>
+<td style="text-align: left;">None</td>
+<td style="text-align: left;">Converts the specified feature to ragged tensor.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>reshape</code></td>
+<td style="text-align: left;"><code>new_shape: Sequence[int]</code></td>
+<td style="text-align: left;">Reshapes tensor to a given new shape.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>setdefault</code></td>
+<td style="text-align: left;"><code>key: str, value: Any</code></td>
+<td style="text-align: left;">If <code>key</code> is an empty tensor, set it to <code>value</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>squeeze_last_dim</code></td>
+<td style="text-align: left;">None</td>
+<td style="text-align: left;">Squeezes the last dimension.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>value_range</code></td>
+<td style="text-align: left;"><code>vmin=-1, vmax=1, in_min=0, in_max=255.0, clip_values=False</code></td>
+<td style="text-align: left;">Transforms an image to <code>[vmin, vmax]</code> range.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="deterministic-random-operations-rand_det_opspy">Deterministic Random Operations (<a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/rand_det_ops.py">rand_det_ops.py</a>)<a class="headerlink" href="#deterministic-random-operations-rand_det_opspy" title="Permanent link">&para;</a></h3>
+<p>These operations use a provided random key (usually in range <code>[0, 1]</code>) to
+perform operations deterministically.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Op Name</th>
+<th style="text-align: left;">Arguments</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>det_crop</code></td>
+<td style="text-align: left;"><code>crop_size: int, num_crops=1, randkey="crop"</code></td>
+<td style="text-align: left;">Deterministically crops an image.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_flip_rot</code></td>
+<td style="text-align: left;"><code>randkey="flip_rot"</code></td>
+<td style="text-align: left;">Deterministically flip and rotate by orthogonal angle.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_fliplr</code></td>
+<td style="text-align: left;"><code>randkey="fliplr"</code></td>
+<td style="text-align: left;">Flips an image horizontally based on <code>randkey</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_noise</code></td>
+<td style="text-align: left;"><code>noise_min=0.0, noise_max=1.0, multiplicative=True, randkey="noise", pixel_wise=True</code></td>
+<td style="text-align: left;">Deterministically insert noise.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_resize</code></td>
+<td style="text-align: left;"><code>min_ratio=0.8, max_ratio=1.3, randkey="resize"</code></td>
+<td style="text-align: left;">Deterministically resizes an image.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_roll</code></td>
+<td style="text-align: left;"><code>randkey1="rollx", randkey2="rolly"</code></td>
+<td style="text-align: left;">Deterministically rolls image.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_rotate</code></td>
+<td style="text-align: left;"><code>randkey="angle", interpolation="bilinear", fill_value=0</code></td>
+<td style="text-align: left;">Rotate by an angle using <code>randkey</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_rotate90</code></td>
+<td style="text-align: left;"><code>randkey="angle"</code></td>
+<td style="text-align: left;">Rotate by an orthogonal angle.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>det_select_channels</code></td>
+<td style="text-align: left;"><code>randkey="start_index_key", num_channels=1, axis=0</code></td>
+<td style="text-align: left;">Deterministically selects random channels.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>randint</code></td>
+<td style="text-align: left;"><code>key: str, minval=0, maxval=1&lt;&lt;31, step=1</code></td>
+<td style="text-align: left;">Creates a random uniform integer in <code>key</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>randu</code></td>
+<td style="text-align: left;"><code>key: str</code></td>
+<td style="text-align: left;">Creates a random uniform float <code>[0, 1)</code> in <code>key</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="satellite-specific-operations-sat_opspy">Satellite Specific Operations (<a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/sat_ops.py">sat_ops.py</a>)<a class="headerlink" href="#satellite-specific-operations-sat_opspy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Op Name</th>
+<th style="text-align: left;">Arguments</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>add_lat_lon_channels</code></td>
+<td style="text-align: left;"><code>key: str</code></td>
+<td style="text-align: left;">Appends unit-sphere cartesian coordinates as channels.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>concat_satellites</code></td>
+<td style="text-align: left;"><code>sats: tuple[str, ...], key: str \| None = None</code></td>
+<td style="text-align: left;">Concatenates multiple satellite inputs.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>merge_all_dimensions</code></td>
+<td style="text-align: left;"><code>keys: tuple = ("image",)</code></td>
+<td style="text-align: left;">Merges all dimensions into a single dimension.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>merge_spatial_dimensions</code></td>
+<td style="text-align: left;"><code>keys: tuple = ("image",)</code></td>
+<td style="text-align: left;">Merges spatial dimensions into a single dimension.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pad_seq</code></td>
+<td style="text-align: left;"><code>keys: str \| list[str], length: int, allow_crop: bool = True</code></td>
+<td style="text-align: left;">Pads (and crops) sequences in first dimension.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pad_tensors</code></td>
+<td style="text-align: left;"><code>keys: str \| list[str], dims_to_pad: list[int]</code></td>
+<td style="text-align: left;">Pads tensors to match the max dim's length.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>rearrange</code></td>
+<td style="text-align: left;"><code>pattern: str, keys: tuple = ("image",), **kwargs</code></td>
+<td style="text-align: left;">Arbitrary rearranges dimensions using einops.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>reduce_temporal</code></td>
+<td style="text-align: left;"><code>keys: tuple = ("image",), kind="first", timestamp_key=None, repeat=None</code></td>
+<td style="text-align: left;">Reduces temporal dimension to a single element.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>s1_to_rgb</code></td>
+<td style="text-align: left;"><code>temporal="first", bands=(0, 1), vmin=-25.0, vmax=0.0</code></td>
+<td style="text-align: left;">Gather Sentinel-1 bands and convert to pseudo-RGB.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>s2_to_rgb</code></td>
+<td style="text-align: left;"><code>bands=(2, 1, 0), temporal="first", bias=0, scale=3000</code></td>
+<td style="text-align: left;">Gather Sentinel-2 bands and convert to RGB.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>scale_sentinel2_by_tanh</code></td>
+<td style="text-align: left;"><code>key: str, imagery_type: str</code></td>
+<td style="text-align: left;">Rescale Sentinel-2 imagery with tanh normalization.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>scale_spatial_dims_like</code></td>
+<td style="text-align: left;"><code>keys_to_resize, reference_key, height_axis=-2, width_axis=-3</code></td>
+<td style="text-align: left;">Scales spatial dims to match reference key.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="image-operations-image_opspy">Image Operations (<a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/image_ops.py">image_ops.py</a>)<a class="headerlink" href="#image-operations-image_opspy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Op Name</th>
+<th style="text-align: left;">Arguments</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>central_crop</code></td>
+<td style="text-align: left;"><code>crop_size: int \| None = None</code></td>
+<td style="text-align: left;">Makes central crop of a given size.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>clear_boundary</code></td>
+<td style="text-align: left;"><code>margin: int, inverse=False</code></td>
+<td style="text-align: left;">Sets a zero value on a boundary of a tensor.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cutout_from_mask</code></td>
+<td style="text-align: left;"><code>mask_key="cutout_mask", replace=0</code></td>
+<td style="text-align: left;">Cuts out a region according to mask.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cutout_mask</code></td>
+<td style="text-align: left;"><code>min_size_ratio=0.01, max_size_ratio=0.5, inkey="image", outkey="cutout_mask"</code></td>
+<td style="text-align: left;">Creates a mask to cutout a region.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>decode</code></td>
+<td style="text-align: left;"><code>channels=3, precise=False</code></td>
+<td style="text-align: left;">Decode an encoded image string.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>decode_jpeg_and_inception_crop</code></td>
+<td style="text-align: left;"><code>size=None, area_min=5, ...</code></td>
+<td style="text-align: left;">Decode jpeg string and make inception crop.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>extract_patches</code></td>
+<td style="text-align: left;"><code>crop_size: int, stride=1, flatten=False</code></td>
+<td style="text-align: left;">Extract overlapping patches from an image.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>flip_lr</code></td>
+<td style="text-align: left;">None</td>
+<td style="text-align: left;">Flips an image horizontally with probability 50%.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>flip_ud</code></td>
+<td style="text-align: left;">None</td>
+<td style="text-align: left;">Flips an image vertically with probability 50%.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>flip_ud_with_label</code></td>
+<td style="text-align: left;"><code>outkey="flipped", key="image"</code></td>
+<td style="text-align: left;">Flips image up/down and saves if it was flipped.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>inception_crop</code></td>
+<td style="text-align: left;"><code>size=None, area_min=5, area_max=100, method="bilinear", antialias=False</code></td>
+<td style="text-align: left;">Makes inception-style image crop.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pansharpen</code></td>
+<td style="text-align: left;"><code>keys: str \| Sequence[str], out_key="image"</code></td>
+<td style="text-align: left;">Pansharpen RGB image with Pan channel.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>rand_shift</code></td>
+<td style="text-align: left;"><code>max_shift=4</code></td>
+<td style="text-align: left;">Randomly shifts given image with reflection.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>random_crop</code></td>
+<td style="text-align: left;"><code>crop_size: int, num_crops=1</code></td>
+<td style="text-align: left;">Makes a random crop of a given size.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>random_fill_along_dim</code></td>
+<td style="text-align: left;"><code>axis=1, probability=0.25, fill_value=0</code></td>
+<td style="text-align: left;">Random masks some channels from a given dimension.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>random_resize</code></td>
+<td style="text-align: left;"><code>ref_size: int, min_ratio: float, max_ratio: float</code></td>
+<td style="text-align: left;">Randomly resizes image.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>resize</code></td>
+<td style="text-align: left;"><code>size: int \| Sequence[int], method="bilinear", antialias=False</code></td>
+<td style="text-align: left;">Resizes image to a given size.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>resize_long</code></td>
+<td style="text-align: left;"><code>longer_size: int, method="area", antialias=True</code></td>
+<td style="text-align: left;">Resizes longer side preserving aspect ratio.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>resize_small</code></td>
+<td style="text-align: left;"><code>smaller_size: int, method="area", antialias=False</code></td>
+<td style="text-align: left;">Resizes smaller side preserving aspect ratio.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>rot90</code></td>
+<td style="text-align: left;">None</td>
+<td style="text-align: left;">Randomly rotate an image by multiples of 90 degrees.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>tanh_value_range</code></td>
+<td style="text-align: left;"><code>mean, std, tanh_scale=1.0</code></td>
+<td style="text-align: left;">Normalizing image pixels by a scaled tanh function.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>to_grayscale</code></td>
+<td style="text-align: left;"><code>keep_dims=True</code></td>
+<td style="text-align: left;">Converts RGB images to grayscale.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>vgg_value_range</code></td>
+<td style="text-align: left;"><code>mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), scale=255.0</code></td>
+<td style="text-align: left;">VGG-style preprocessing.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="internal-specialized-operations-internal_opspy-decode_opspy">Internal &amp; Specialized Operations (<a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/internal_ops.py">internal_ops.py</a>, <a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/decode_ops.py">decode_ops.py</a>)<a class="headerlink" href="#internal-specialized-operations-internal_opspy-decode_opspy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Op Name</th>
+<th style="text-align: left;">Arguments</th>
+<th style="text-align: left;">Description</th>
+<th style="text-align: left;">File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>cutout</code></td>
+<td style="text-align: left;"><code>size=20, replace=128</code></td>
+<td style="text-align: left;">Cuts out a square of fixed size.</td>
+<td style="text-align: left;"><a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/internal_ops.py"><code>internal_ops.py</code></a></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cutout_randsize</code></td>
+<td style="text-align: left;"><code>min_size_ratio=0.1, max_size_ratio=0.5, replace=128</code></td>
+<td style="text-align: left;">Cuts out a random-sized box.</td>
+<td style="text-align: left;"><a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/internal_ops.py"><code>internal_ops.py</code></a></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>decode_jeo_satellites</code></td>
+<td style="text-align: left;"><code>sat_keys, data_dir, dataset, ...</code></td>
+<td style="text-align: left;">Decodes standardized drivers example.</td>
+<td style="text-align: left;"><a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/decode_ops.py"><code>decode_ops.py</code></a></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>randaug_geo</code></td>
+<td style="text-align: left;"><code>num_layers=2, magnitude=10, ...</code></td>
+<td style="text-align: left;">Applies RandAugment for geospatial data.</td>
+<td style="text-align: left;"><a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/internal_ops.py"><code>internal_ops.py</code></a></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>simclr_crop_and_resize</code></td>
+<td style="text-align: left;"><code>height, width=None</code></td>
+<td style="text-align: left;">Random crop and resize as in SimCLR.</td>
+<td style="text-align: left;"><a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/internal_ops.py"><code>internal_ops.py</code></a></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>simclr_random_color_jitter</code></td>
+<td style="text-align: left;"><code>p=1.0, strength=0.5</code></td>
+<td style="text-align: left;">Color jittering as in SimCLR.</td>
+<td style="text-align: left;"><a href="https://github.com/google-deepmind/jeo/tree/main/jeo/pp/internal_ops.py"><code>internal_ops.py</code></a></td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../evaluators/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Evaluators">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Evaluators
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../launching/" class="md-footer__link md-footer__link--next" aria-label="Next: Launching Experiments">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Launching Experiments
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["announce.dismiss", "content.action.edit", "content.action.view", "content.code.annotate", "content.code.copy", "content.tooltips", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "search.suggest", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
