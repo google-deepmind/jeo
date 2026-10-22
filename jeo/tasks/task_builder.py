@@ -15,7 +15,7 @@
 """Task builder."""
 
 import abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import functools
 from typing import Any
 
@@ -24,10 +24,10 @@ import flax.linen as nn
 import jax.numpy as jnp
 from jeo import train_utils
 from jeo.losses import losses
+from ml_collections import config_dict
 
 
 ArrayDict = dict[str, jnp.ndarray]
-Mapping = dict[str, Any]
 FloatOrArr = float | jnp.ndarray
 PredictFn = Callable[[Mapping, Mapping], tuple[Any] | Mapping]
 ArrayTupleOrDict = tuple[ArrayDict | jnp.ndarray, ...]
@@ -39,7 +39,7 @@ class TaskBase(abc.ABC):
   def __init__(
       self,
       loss_name: str = "sigmoid_xent",
-      loss_kw: dict[str, Any] | None = None,
+      loss_kw: Mapping[str, Any] | None = None,
       modalities: Sequence[str] | str = ("image",),
       input_as_dict: bool = False,
   ):
@@ -51,7 +51,7 @@ class TaskBase(abc.ABC):
     self.modalities = modalities
     self.input_as_dict = input_as_dict
 
-  def model_inputs(self, *batches: Mapping) -> ArrayTupleOrDict:
+  def model_inputs(self, *batches: Mapping[str, Any]) -> ArrayTupleOrDict:
     """Processes the model inputs.
 
     By default, only a single batch is expected. But in some cases, more than
@@ -114,7 +114,7 @@ class TaskBase(abc.ABC):
 
   @abc.abstractmethod
   def get_loss_and_aux(
-      self, model_outputs, *batches: Mapping, train: bool = False
+      self, model_outputs, *batches: Mapping[str, Any], train: bool = False
   ) -> tuple[FloatOrArr, dict[str, FloatOrArr]]:
     ...
 
@@ -142,17 +142,20 @@ COMMON_TASKS = {
 }
 
 
-def from_config(config):
-  """Creates a list of evaluators based on `config`."""
+def from_config(config: Mapping[str, Any]) -> TaskBase:
+  """Creates a task from a task config."""
+  config = config_dict.ConfigDict(config)  # pyrefly: ignore[bad-assignment]
   task_type = config.get("task_type", "classification")
   task_type = COMMON_TASKS.get(task_type, task_type)
   task_cls = train_utils.import_module(task_type, "tasks")
   if not callable(task_cls):
     task_cls = getattr(task_cls, "Task")
 
-  args = {"loss_name": config.loss} if "loss" in config else {}
-  args["loss_kw"] = config.get("loss_kw", {})
-  args |= config.get("task_kw", {})
+  args = config_dict.create(loss_kw=config.get("loss_kw", {}))
+  if "loss" in config:
+    args.loss_name = config.loss  # pyrefly: ignore[missing-attribute]
+  args.update(config.get("task_kw", {}))
+  args = args.to_dict()  # Convert to pure dicts.
 
   logging.info("Setting up task `%s` in class `%s` with args: %s",
                task_type, task_cls, args)

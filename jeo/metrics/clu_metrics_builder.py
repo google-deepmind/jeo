@@ -199,7 +199,7 @@ def get_metrics_cls(
           precision_point=precision_point
       )
     elif reg_name.startswith("expensive_recall_at_precision_"):
-      precision_point = float(reg_name["expensive_recall_at_precision_":])
+      precision_point = float(reg_name["expensive_recall_at_precision_":])  # pyrefly: ignore[bad-index]
       metrics_dict[name] = clu_metrics.recall_at_precision_function_expensive(
           precision_point=precision_point
       )

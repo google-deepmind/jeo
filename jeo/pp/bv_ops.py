@@ -329,9 +329,9 @@ def get_choice(n: int | str = "single", inkey: str | None = None,
 
     for ik, ok in zip(inkeys, outkeys):
       if n == "single":
-        result = data[ik][index]  # pylint: disable=undefined-variable
+        result = data[ik][index]  # pylint: disable=undefined-variable  # pyrefly: ignore[unbound-name]
       else:
-        result = tf.gather(data[ik], indices, axis=0)  # pylint: disable=undefined-variable
+        result = tf.gather(data[ik], indices, axis=0)  # pylint: disable=undefined-variable  # pyrefly: ignore[unbound-name]
         result = tf.ensure_shape(result, [n] + [None] * (result.ndim - 1))
       data[ok] = result
 

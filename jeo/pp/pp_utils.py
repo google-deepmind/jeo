@@ -29,9 +29,9 @@ def maybe_repeat(arg: Sequence[Any] | Any, n_reps: int) -> Sequence[Any]:
   return arg
 
 
-def get_lookup_table(label_map: dict[Any, Any] | Sequence[Any],  # pytype: disable=annotation-type-mismatch
+def get_lookup_table(label_map: dict[Any, Any] | Sequence[Any],
                      default_value: Any = -1,
-                     key_dtype: bool = None) -> tf.lookup.StaticHashTable:
+                     key_dtype: bool = None) -> tf.lookup.StaticHashTable:  # pyrefly: ignore[bad-function-definition]
   """Converts list of string labels or dict to a lookup hashtable."""
   if not isinstance(label_map, dict):
     label_map = {k: i for i, k in enumerate(label_map)}
@@ -74,10 +74,10 @@ def load_normalization_ranges(
   n_bands = len(stats)
   centers, scales = [], []
   for i in range(n_bands):
-    if i not in stats:
+    if i not in stats:  # pyrefly: ignore[unsupported-operation]
       raise ValueError("Expected to have a dict of bands in stats.")
-    centers.append(stats[i][center])
-    scales.append(stats[i][scale])
+    centers.append(stats[i][center])  # pyrefly: ignore[bad-index]
+    scales.append(stats[i][scale])  # pyrefly: ignore[bad-index]
   if as_tf:
     return tf.constant(centers, dtype=tf.float32), tf.constant(scales,
                                                                dtype=tf.float32)

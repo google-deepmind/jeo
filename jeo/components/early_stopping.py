@@ -69,9 +69,9 @@ class EarlyStopping:
     assert bool(self.patience_steps) ^ bool(self.patience_epochs)
     assert bool(self.start_from_step) ^ bool(self.start_from_epoch)
     if not self.patience_steps:
-      self.patience_steps = self.patience_epochs * self.steps_per_epoch
+      self.patience_steps = self.patience_epochs * self.steps_per_epoch  # pyrefly: ignore[unsupported-operation]
     if not self.start_from_step:
-      self.start_from_step = self.start_from_epoch * self.steps_per_epoch
+      self.start_from_step = self.start_from_epoch * self.steps_per_epoch  # pyrefly: ignore[unsupported-operation]
     if self.mode == "auto":
       self.mode = "min" if "loss" in self.monitor.lower() else "max"
     self._compare_fn = np.greater if self.mode == "max" else np.less
@@ -96,8 +96,8 @@ class EarlyStopping:
       self._best_step = step
       return False
 
-    if (step < self.start_from_step) or (
-        step < self._best_step + self.patience_steps):
+    if (step < self.start_from_step) or (  # pyrefly: ignore[unsupported-operation]
+        step < self._best_step + self.patience_steps):  # pyrefly: ignore[unsupported-operation]
       return False
 
     return True

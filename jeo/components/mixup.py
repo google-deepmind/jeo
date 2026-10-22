@@ -51,7 +51,7 @@ def get_mixup(
   if mix_type == "cut-mix":
     # Support mix-up for multiple input modalities.
     if not isinstance(images_key, (tuple, list)):
-      images_key = (images_key,)
+      images_key = (images_key,)  # pyrefly: ignore[bad-assignment]
     for _ in range(num_iter):
       rng, batch = _cutmix(
           rng,

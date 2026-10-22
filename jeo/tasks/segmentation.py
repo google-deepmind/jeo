@@ -85,8 +85,8 @@ class SegmentationTask(task_builder.TaskBase):
 
     def fn(model_outputs: jnp.ndarray | Sequence[jnp.ndarray]):
       if not isinstance(model_outputs, (list, tuple)):
-        model_outputs = (model_outputs,)
-      logits, _ = model_outputs  # pytype: disable=bad-unpacking
+        model_outputs = (model_outputs,)  # pyrefly: ignore[bad-assignment]
+      logits, _ = model_outputs
       predictions = jnp.argmax(logits, axis=-1)
       probs = jax.nn.softmax(logits)
       one_hot = jax.nn.one_hot(predictions, num_classes=probs.shape[-1])
@@ -152,8 +152,8 @@ class RegressionSegmentationTask(task_builder.TaskBase):
 
     def fn(model_outputs: jnp.ndarray | Sequence[jnp.ndarray]):
       if not isinstance(model_outputs, (list, tuple)):
-        model_outputs = (model_outputs,)
-      preds, _ = model_outputs  # pytype: disable=bad-unpacking
+        model_outputs = (model_outputs,)  # pyrefly: ignore[bad-assignment]
+      preds, _ = model_outputs
       return {"preds": preds}
 
     return fn
@@ -224,9 +224,9 @@ def _get_weights(
 ):
   """Returns weights for the loss."""
   if weights_key:
-    if weights_key not in batch.keys():
+    if weights_key not in batch.keys():  # pyrefly: ignore[missing-attribute]
       raise ValueError(f"Weights key {weights_key} not in batch.")
-    weights = batch[weights_key]
+    weights = batch[weights_key]  # pyrefly: ignore[unsupported-operation]
   else:
     weights = jnp.ones(logits.shape[:-1], "float32")
 

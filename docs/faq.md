@@ -1,4 +1,4 @@
-# FAQ & Troubleshooting
+# ❓ FAQ & Troubleshooting
 
 (internal link)
 

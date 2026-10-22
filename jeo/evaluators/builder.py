@@ -87,7 +87,7 @@ class EvaluatorBase(abc.ABC):
 def from_config(
     config: ConfigDict,
     predict_fn: Callable[[Any], Any],
-    write_note: Callable[[str], None] = lambda s: s,
+    write_note: Callable[[str], None] = lambda s: s,  # pyrefly: ignore[bad-function-definition]
     get_steps: Callable[[str, int, ConfigDict], int] | None = None,
     workdir: str | None = None,
 ) -> list[tuple[str, Any, int, str]]:

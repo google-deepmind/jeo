@@ -38,7 +38,7 @@ def load_json(
     with gfile.GFile(full_path, "r") as f:
       d = dict(json.load(f))
   else:
-    full_path = standardized_path(path, split_name, postfix + BAND_PREFIX + "*")
+    full_path = standardized_path(path, split_name, postfix + BAND_PREFIX + "*")  # pyrefly: ignore[unsupported-operation]
     d = {}
     for filename in gfile.Glob(full_path):
       band_position = filename.rindex(BAND_PREFIX) + len(BAND_PREFIX)

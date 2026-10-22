@@ -1,4 +1,4 @@
-# Welcome to Jeo
+# 🌍 Welcome to Jeo
 
 <div style="text-align: left">
 <img align="right" src="images/jeo_logo_blue.png" width="100">

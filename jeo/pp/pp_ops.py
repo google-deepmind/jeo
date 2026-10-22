@@ -168,7 +168,7 @@ def get_drop(keys: Sequence[str]):
 def get_squeeze_dim(*keys: Sequence[str], axis: int = 0):
   """Squeezes by one dimension at given axis (can provide multiple keys)."""
   if len(keys) == 1 and isinstance(keys[0], (list, tuple)):
-    keys = keys[0]
+    keys = keys[0]  # pyrefly: ignore[bad-assignment]
 
   def _pp(features):
     for k in keys:
@@ -182,7 +182,7 @@ def get_squeeze_dim(*keys: Sequence[str], axis: int = 0):
 def get_max(*keys: Sequence[str], axis: int = 0, keepdims: bool = False):
   """Runs reduce_max on a given axis (can provide multiple keys)."""
   if len(keys) == 1 and isinstance(keys[0], (list, tuple)):
-    keys = keys[0]
+    keys = keys[0]  # pyrefly: ignore[bad-assignment]
 
   def _pp(features):
     for k in keys:
@@ -212,7 +212,7 @@ def get_reduce(keys: Sequence[str], outkey: str, reduction: str = "prod"):
 def get_expand_dim(*keys: Sequence[str], axis: int = 0):
   """Expands by one dimension at given axis (can provide multiple keys)."""
   if len(keys) == 1 and isinstance(keys[0], (list, tuple)):
-    keys = keys[0]
+    keys = keys[0]  # pyrefly: ignore[bad-assignment]
 
   def _pp(features):
     for k in keys:
@@ -304,7 +304,7 @@ def get_select_channels(
   if isinstance(key_channels, (list, tuple, int)):
     key_channels = {"image": key_channels}
   def _pp(features):
-    for key, ind in key_channels.items():
+    for key, ind in key_channels.items():  # pyrefly: ignore[missing-attribute]
       features[key] = tf.gather(features[key], ind, axis=axis)
     return features
   return _pp
@@ -369,7 +369,7 @@ def get_remap_ints(mapping: list[int]):
 def get_remap(mapping: dict[Any, Any], default_value: Any = 0):
   """Remapping values from a feature."""
 
-  mapping = pp_utils.get_lookup_table(mapping, default_value)
+  mapping = pp_utils.get_lookup_table(mapping, default_value)  # pyrefly: ignore[bad-assignment]
 
   def _pp(data):
     return mapping[data]

@@ -61,6 +61,7 @@ def generalized_softmax_xent(
     weights: jnp.ndarray | None = None,
     label_smoothing: float = 0.0,
     normalize: bool = True,
+    class_weights: list[float] | None = None,
 ) -> jnp.ndarray:
   """Compute generalized (weighted, normalized, smoothed) cross entropy.
 
@@ -75,11 +76,15 @@ def generalized_softmax_xent(
      values.
    normalize: normalize each batch item loss by the number of elements (pixels,
      tokens) in it. Otherwise, each pixel/token losses are added together.
+   class_weights: Weights for each class. If None, all classes are weighted
+     equally.
 
   Returns:
     Scalar loss () or per_batch_item loss (B,).
   """
   targets = get_soft_targets(labels, logits, label_smoothing)
+  if class_weights is not None:
+    targets = targets * jnp.array(class_weights)
   loss = -jnp.sum(targets * jax.nn.log_softmax(logits), axis=-1)
   if weights is not None:
     loss = loss * weights
@@ -268,12 +273,17 @@ def generalized_dice(
    label_smoothing: label smoothing constant, used to determine the on and off
      values.
    norm_type: The type of denominator to use to compute the dice coefficient.
+     One of `standard`, `squared`, `tanimoto`, `tversky` (squared terms
+     weighted by `beta`) or `tversky_linear` (the Tversky index
+     TP / (TP + (1 - beta) * FP + beta * FN), equal to `standard` at
+     beta = 0.5).
    eps: The larger the smoothing coefficient the less sensitive is the dice loss
      to single pixel value changes. The default value is set low and only to
      avoid division by zero.
    beta: The coefficient that controls the weight given to false positive and
      false negatives. Higher values put more weight on false negatives leading
-     to higher recall. Used only for `norm_type='tversky'`.
+     to higher recall. Used only for `norm_type='tversky'` and
+     `norm_type='tversky_linear'`.
    dual: If True, the loss is computed as the average between the true loss and
      the loss on the dual labels. Literature claims that improves convergence
      speed.
@@ -297,24 +307,24 @@ def generalized_dice(
 
   if class_weights is None:
     class_weights = [1.0 / logits.shape[-1]] * logits.shape[-1]
-  assert len(class_weights := jnp.array(class_weights)) == logits.shape[-1]
+  assert len(class_weights := jnp.array(class_weights)) == logits.shape[-1]  # pyrefly: ignore[bad-argument-type]
   # Ensure that the class weights sum to 1.
-  class_weights = class_weights / class_weights.sum()
+  class_weights = class_weights / class_weights.sum()  # pyrefly: ignore[missing-attribute]
 
   if isinstance(beta, float):
     beta = [beta] * logits.shape[-1]
-  assert len(beta := jnp.array(beta)) == logits.shape[-1]
+  assert len(beta := jnp.array(beta)) == logits.shape[-1]  # pyrefly: ignore[bad-argument-type]
 
   # [B, ..., C]
   probs = getattr(jax.nn, activation)(logits)
   # shape: [B,]
   coeff = _generalized_dice_coefficient(
-      probs, targets, weights, class_weights, norm_type, eps, beta
+      probs, targets, weights, class_weights, norm_type, eps, beta  # pyrefly: ignore[bad-argument-type]
   )
   if dual:
     # Compute the dual coefficient by inverting labels and predictions.
     dual_coeff = _generalized_dice_coefficient(
-        1 - probs, 1 - targets, weights, class_weights, norm_type, eps, beta
+        1 - probs, 1 - targets, weights, class_weights, norm_type, eps, beta  # pyrefly: ignore[bad-argument-type]
     )
     coeff = 0.5 * coeff + 0.5 * dual_coeff
 
@@ -349,6 +359,13 @@ def _generalized_dice_coefficient(
     # Union with squared terms that penalises false negative proportionally to
     # `beta` and false positive to `1-beta` [B, C].
     norm = 2 * jnp.sum((1 - beta) * probs**2 + beta * labels**2, **kwargs)
+  elif norm_type == "tversky_linear":
+    # Tversky index denominator, penalising false negatives proportionally to
+    # `beta` and false positives to `1-beta` [B, C]:
+    #   2 * (TP + (1 - beta) * FP + beta * FN)
+    #   = 2 * sum((1 - beta) * probs + beta * labels).
+    # Matches `standard` at beta = 0.5.
+    norm = 2 * jnp.sum((1 - beta) * probs + beta * labels, **kwargs)
   else:
     raise ValueError(f"Unknown norm type: {norm_type}")
 
@@ -394,7 +411,7 @@ def softmax_focal_loss(
   targets = get_soft_targets(labels, logits, label_smoothing)
   log_prob = jax.nn.log_softmax(logits, axis=-1)
   log_p = jnp.sum(jnp.array(alpha) * log_prob * targets, axis=-1)
-  loss = -log_p * (1.0 - jnp.exp(log_p)) ** gamma
+  loss = -log_p * jnp.clip(1.0 - jnp.exp(log_p), 1e-8) ** gamma
   # equivalent:
   # log_pt = jax.nn.log_softmax(logits, axis=-1) * targets
   # loss = -alpha * log_pt * (1-jax.nn.softmax(logits)*targets)**gamma
@@ -718,8 +735,8 @@ def generalized_supres_loss(
           )
       )
 
-  loss = jnp.stack(losses_values, axis=0).min(axis=0)  # (B,)
-  return loss.mean() if reduction else loss
+  loss = jnp.stack(losses_values, axis=0).min(axis=0)  # (B,)  # pyrefly: ignore[bad-assignment]
+  return loss.mean() if reduction else loss  # pyrefly: ignore[bad-return, missing-attribute]
 
 
 def supres_losses(sr, sr_sigma, hr, hr_mask=None, base_cpsnr=None,
@@ -855,6 +872,67 @@ def compute_supres_loss(pred_hr, pred_uncert, hr, hr_mask, **kwargs):
   return supres_losses(pred_hr, pred_uncert, hr, hr_mask, **kwargs)
 
 
+def image_gradient_loss(
+    logits: jnp.ndarray,
+    labels: jnp.ndarray,
+    *,
+    reduction: bool = True,
+    weights: jnp.ndarray | None = None,
+    do_onehot: bool = False,
+) -> jnp.ndarray:
+  """Computes L1 loss on the spatial gradients to encourage sharpness.
+
+  Based on Ma et al. (2020) "Structure-Preserving Super Resolution With
+  Gradient Guidance":
+  https://openaccess.thecvf.com/content_CVPR_2020/papers/Ma_Structure-Preserving_Super_Resolution_With_Gradient_Guidance_CVPR_2020_paper.pdf
+
+  Args:
+    logits: Predicted logits of shape (B, H, W, C).
+    labels: Labels of shape (B, H, W, C) or (B, H, W).
+    reduction: Whether to reduce the loss to a scalar.
+    weights: Weights of shape (B, H, W) or (B, H, W, C).
+    do_onehot: Whether to one-hot encode the labels.
+
+  Returns:
+    Scalar loss () or per_batch_item loss (B,).
+  """
+  if logits.ndim == labels.ndim + 1:
+    if do_onehot:
+      labels = jax.nn.one_hot(labels, logits.shape[-1])
+    else:
+      logits = jnp.squeeze(logits, -1)
+  chex.assert_equal_shape((logits, labels))
+
+  pred_dx = logits[:, :, 1:] - logits[:, :, :-1]
+  pred_dy = logits[:, 1:, :] - logits[:, :-1, :]
+
+  true_dx = labels[:, :, 1:] - labels[:, :, :-1]
+  true_dy = labels[:, 1:, :] - labels[:, :-1, :]
+
+  loss_dx = jnp.abs(pred_dx - true_dx)
+  loss_dy = jnp.abs(pred_dy - true_dy)
+
+  non_batch_axes = tuple(range(1, labels.ndim))
+
+  if weights is None:
+    loss = loss_dx.mean(axis=non_batch_axes) + loss_dy.mean(axis=non_batch_axes)
+  else:
+    if weights.ndim == labels.ndim - 1:
+      weights = weights[..., None]
+
+    weights_dx = weights[:, :, :-1]
+    weights_dy = weights[:, :-1, :]
+
+    norm_factor_dx = jnp.clip(weights_dx.sum(axis=non_batch_axes), 2e-38)
+    norm_factor_dy = jnp.clip(weights_dy.sum(axis=non_batch_axes), 2e-38)
+
+    l_dx = (loss_dx * weights_dx).sum(axis=non_batch_axes) / norm_factor_dx
+    l_dy = (loss_dy * weights_dy).sum(axis=non_batch_axes) / norm_factor_dy
+    loss = l_dx + l_dy
+
+  return loss.mean() if reduction else loss
+
+
 def compute_l1_loss(pred, true, n_pixels, sigma=None):
   # pred, true, sigma: (B,H,W,[C])
   # n_pixels: number of masked pixels (other values are expected to be 0 in img)
@@ -965,7 +1043,7 @@ def weighted_losses_sum(
     combined_loss += loss_weight * losses_values[name]
   if normalize_loss_weights:
     combined_loss /= norm_weights
-  return combined_loss, losses_values
+  return combined_loss, losses_values  # pyrefly: ignore[bad-return]
 
 
 ################################################################################
@@ -995,6 +1073,7 @@ REGRESSION_SEGMENTATION_FNS = {  # Only for reference and testing.
     "l2_loss": l2_loss,
     "kld_loss": kld_loss,
     "sigmoid_xent": sigmoid_xent,
+    "image_gradient_loss": image_gradient_loss,
 }
 SELFSUP_LOSS_FNS = {
     "nt_xent": nt_xent,
@@ -1008,6 +1087,7 @@ LOSS_FNS = {
     "weighted_losses_sum": weighted_losses_sum,
     "gnll_loss": gnll_loss,
     "generalized_supres_loss": generalized_supres_loss,
+    "image_gradient_loss": image_gradient_loss,
     "unused": lambda *_, **__: None,
 }
 

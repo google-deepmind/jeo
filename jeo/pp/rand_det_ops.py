@@ -188,7 +188,7 @@ def get_det_flip_rot(*, randkey: str = "flip_rot"):
 @pp_utils.InKeyOutKey(with_data=True)
 def get_det_crop(crop_size: int, num_crops: int = 1, randkey: str = "crop"):
   """Deterministically crops an image `num_crops` times."""
-  crop_size = pp_utils.maybe_repeat(crop_size, 2)
+  crop_size = pp_utils.maybe_repeat(crop_size, 2)  # pyrefly: ignore[bad-assignment]
 
   def _det_crop(image, data):
     seed = tf.cast(2**30 * data[randkey], "int32")
@@ -201,8 +201,10 @@ def get_det_crop(crop_size: int, num_crops: int = 1, randkey: str = "crop"):
     if ndim == 2:
       image = image[..., None]
     elif ndim == 4:
+      # Transpose from [T, H, W, C] to [H, W, T, C] before reshaping and
+      # cropping so time and channel axes are grouped per spatial pixel.
       image = tf.reshape(
-          image,
+          tf.transpose(image, [1, 2, 0, 3]),
           [image_shape[1], image_shape[2], image_shape[0] * image_shape[3]],
       )
     elif ndim != 3:
@@ -211,7 +213,7 @@ def get_det_crop(crop_size: int, num_crops: int = 1, randkey: str = "crop"):
     shape = tf.shape(image)
     h, w = shape[0], shape[1]
 
-    ch, cw = crop_size[0], crop_size[1]
+    ch, cw = crop_size[0], crop_size[1]  # pyrefly: ignore[bad-index]
     ratios = tf.random.stateless_uniform(
         [num_crops, 2], seed=[seed, seed + 1], minval=0.0, maxval=1.0
     )
@@ -222,13 +224,18 @@ def get_det_crop(crop_size: int, num_crops: int = 1, randkey: str = "crop"):
       crop = image[y0s[i] : y0s[i] + ch, x0s[i] : x0s[i] + cw, :]
       # Explicitly set the H, W shape of the crop as otherwise TF is not able to
       # infer the shape of the cropped image statically.
-      crop.set_shape([crop_size[0], crop_size[1], None])
+      crop.set_shape([crop_size[0], crop_size[1], None])  # pyrefly: ignore[bad-index]
       if ndim == 2:
         crop = crop[..., 0]
       elif ndim == 4:
-        crop = tf.reshape(
-            crop,
-            [image_shape[0], crop_size[0], crop_size[1], image_shape[3]],
+        # Unpack [ch, cw, T * C] to [ch, cw, T, C] and transpose back to
+        # [T, ch, cw, C].
+        crop = tf.transpose(
+            tf.reshape(
+                crop,
+                [ch, cw, image_shape[0], image_shape[3]],
+            ),
+            [2, 0, 1, 3],
         )
       crops.append(crop)
     cropped = tf.stack(crops)

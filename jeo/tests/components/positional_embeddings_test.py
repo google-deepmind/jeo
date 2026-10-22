@@ -104,10 +104,10 @@ class ComponentsTest(parameterized.TestCase):
     m = MockModel(posemb)
     targets = jnp.ones((batch_size, seq_len, emb_dim), dtype=jnp.int64)
     params = m.init(jax.random.PRNGKey(0), targets)
-    _, y, pe = m.apply(params, targets)
+    _, y, pe = m.apply(params, targets)  # pyrefly: ignore[bad-unpacking]
     if posemb != "none":
       self.assertEqual((1, seq_len, emb_dim), pe.shape)
-    self.assertEqual((batch_size, seq_len, emb_dim), y.shape)
+    self.assertEqual((batch_size, seq_len, emb_dim), y.shape)  # pyrefly: ignore[missing-attribute]
     np.testing.assert_allclose(y-pe, targets)
 
   def test_add_pos_emb_decode(self):

@@ -1,4 +1,4 @@
-# Configs
+# ⚙️ Configs
 
 (internal link)
 

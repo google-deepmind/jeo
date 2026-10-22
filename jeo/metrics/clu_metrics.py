@@ -64,7 +64,7 @@ class ConfusionMatrixMultilabel(clu_metrics_builder.Metric):
   thresholds: jnp.ndarray
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       labels: jnp.ndarray,
       predictions: jnp.ndarray,  # Expected to be probabilities (0-1).
@@ -370,7 +370,7 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
   exclude_background_class: bool = False
 
   @classmethod
-  def empty(cls, num_classes: int, exclude_background_class: bool = False):
+  def empty(cls, num_classes: int, exclude_background_class: bool = False):  # pyrefly: ignore[bad-override]
     return cls(
         matrix=jnp.zeros((num_classes, num_classes), dtype=jnp.int32),
         exclude_background_class=exclude_background_class,
@@ -421,7 +421,7 @@ class ConfusionMatrix(clu_metrics_builder.Metric):
     # using only jnp.int32. Unfortunately JAX does not support jnp.int64 out of
     # the box.
     return type(self)(matrix=self.matrix + other.matrix,
-                      exclude_background_class=jnp.logical_or(  # pytype: disable=wrong-arg-types
+                      exclude_background_class=jnp.logical_or(  # pyrefly: ignore[bad-argument-type]
                           self.exclude_background_class,
                           other.exclude_background_class))
 
@@ -442,7 +442,7 @@ class ConfusionMatrix3D(ConfusionMatrix):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       labels: jnp.ndarray,  # (B,T,...) or (B,T,...,N)
       logits: jnp.ndarray,  # (B,T,...,N)
@@ -539,7 +539,7 @@ class PerStrataBinaryConfusionMatrix(ConfusionMatrix):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       labels: jnp.ndarray,  # (B,...) or (B,...,N)
       logits: jnp.ndarray,  # (B,...,N)
@@ -599,7 +599,7 @@ class PerStrataConfusionMatrix(ConfusionMatrix):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       labels: jnp.ndarray,  # (B,...) or (B,...,N)
       logits: jnp.ndarray,  # (B,...,N)
@@ -667,7 +667,7 @@ class MIoU(ConfusionMatrix):
       iou_per_class = iou_per_class[1:]
     # If there are no tp+fp+fn (nan values), then this class should not be
     # counted. Or should it be counted as 100% correct?
-    return np.nanmean(iou_per_class)
+    return np.nanmean(iou_per_class)  # pyrefly: ignore[bad-return]
 
 
 @flax.struct.dataclass
@@ -684,7 +684,7 @@ class F1Macro(ConfusionMatrix):
       f1 = f1[1:]
     # If tp+fp+fn is zero (no examples with this class, and no false predictions
     # for this class), then this class should be excluded from averaging.
-    return np.nanmean(f1)
+    return np.nanmean(f1)  # pyrefly: ignore[bad-return]
 
 
 @flax.struct.dataclass
@@ -700,7 +700,7 @@ class PrecisionMacro(ConfusionMatrix):
     if self.exclude_background_class:
       # Don't count the first excluded background class.
       per_class = per_class[1:]
-    return np.nanmean(per_class)
+    return np.nanmean(per_class)  # pyrefly: ignore[bad-return]
 
 
 @flax.struct.dataclass
@@ -716,7 +716,7 @@ class RecallMacro(ConfusionMatrix):
     if self.exclude_background_class:
       # Don't count the first excluded background class.
       per_class = per_class[1:]
-    return np.nanmean(per_class)
+    return np.nanmean(per_class)  # pyrefly: ignore[bad-return]
 
 
 @flax.struct.dataclass
@@ -724,7 +724,7 @@ class PartialMultilabelAccuracy(clu_metrics_builder.Average):
   """Computes the accuracy from model outputs `logits` and `labels_onehot` for partial multilabel tasks."""
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,
@@ -761,7 +761,7 @@ class Accuracy(clu_metrics_builder.Average):
   """Computes the accuracy from model outputs `logits` and `labels`."""
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,
@@ -801,7 +801,7 @@ class Bias(clu_metrics_builder.Average):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,
@@ -836,7 +836,7 @@ class MSE(clu_metrics_builder.Average):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,
@@ -886,7 +886,7 @@ class MAE(clu_metrics_builder.Average):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,
@@ -983,11 +983,11 @@ class StratifiedRegressionConfusionMatrix(ConfusionMatrix):
   ):
     label_bins = jax.nn.one_hot(
         jnp.digitize(labels, jnp.array(stratification_bins)) - 1,
-        len(stratification_bins),
+        len(stratification_bins),  # pyrefly: ignore[bad-argument-type]
     )
     logit_bins = jax.nn.one_hot(
         jnp.digitize(logits, jnp.array(stratification_bins)) - 1,
-        len(stratification_bins),
+        len(stratification_bins),  # pyrefly: ignore[bad-argument-type]
     )
 
     return super().from_model_output(
@@ -1032,7 +1032,7 @@ def get_stratified_avg_metric(metric_name: str):
     count: jnp.ndarray
 
     @classmethod
-    def from_model_output(
+    def from_model_output(  # pyrefly: ignore[bad-override]
         cls,
         *,
         logits: jnp.ndarray,
@@ -1070,7 +1070,7 @@ def get_stratified_avg_metric(metric_name: str):
       # stratifying by labels.
       if isinstance(stratification_bins, list):
         stratification_bins = dict(labels=stratification_bins)
-      stratification_bins = {
+      stratification_bins = {  # pyrefly: ignore[bad-assignment]
           k: jnp.array(v) for k, v in stratification_bins.items()
       }
       kwargs["labels"] = labels
@@ -1079,7 +1079,7 @@ def get_stratified_avg_metric(metric_name: str):
 
       segment_ids = []
       bin_shapes = []
-      for key, bins in stratification_bins.items():
+      for key, bins in stratification_bins.items():  # pyrefly: ignore[missing-attribute]
         if key not in kwargs:
           raise ValueError(
               f"Missing stratification key {key} in kwargs. Available keys:"
@@ -1144,10 +1144,10 @@ def get_stratified_avg_metric(metric_name: str):
       )
 
     def compute(self) -> jnp.ndarray:
-      names = [f.name for f in dataclasses.fields(metric_cls)]  # pytype: disable=wrong-arg-types
+      names = [f.name for f in dataclasses.fields(metric_cls)]
       stats = {name: getattr(self, name) for name in names}
       stats["count"] = jnp.where(stats["count"] == 0, 1, stats["count"])
-      return metric_cls(**stats).compute()  # pytype: disable=not-callable
+      return metric_cls(**stats).compute()
 
   return StratifiedAveragedMetric
 
@@ -1161,7 +1161,7 @@ class ECE(clu_metrics_builder.Average):
   """
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,
@@ -1190,7 +1190,7 @@ class ECE(clu_metrics_builder.Average):
     for bin_i in range(num_bins):
       ece += jnp.abs(jnp.where(bins == bin_i, diff, 0).sum())
 
-    return super().from_model_output(values=ece/sum(labels.shape), **kwargs)
+    return super().from_model_output(values=ece/sum(labels.shape), **kwargs)  # pyrefly: ignore[bad-argument-type]
 
 
 T = TypeVar("T", bound="CollectingMetric")
@@ -1507,7 +1507,7 @@ class MinLogvar(Minimum):
   """Computes the min from model outputs log_variances."""
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       log_variances: jnp.ndarray,
       label_weights: jnp.ndarray | None = None,
@@ -1527,7 +1527,7 @@ class MaxLogvar(Maximum):
   """Computes the max from model outputs log_variances."""
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       log_variances: jnp.ndarray,
       label_weights: jnp.ndarray | None = None,
@@ -1553,7 +1553,7 @@ class MaskCount(clu_metrics_builder.Metric):
   count: jnp.ndarray
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls, logits: jnp.ndarray, mask: jnp.ndarray | None = None, **_
   ) -> clu_metrics_builder.Metric:
     if mask is None:
@@ -1574,7 +1574,7 @@ class SMAPE(clu_metrics_builder.Average):
   """Computes Symmetric Mean Absolute Percentage Error (SMAPE)."""
 
   @classmethod
-  def from_model_output(
+  def from_model_output(  # pyrefly: ignore[bad-override]
       cls,
       *,
       logits: jnp.ndarray,

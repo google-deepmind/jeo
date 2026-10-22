@@ -64,14 +64,17 @@ def get_per_class_multilabel_metrics(
     label_map: Sequence[str] | None,
     metrics: str | Sequence[str] | bool,
     threshold: float,
-    computed_thresholds: np.ndarray | None = None,
+    computed_thresholds: np.ndarray | Sequence[float],
     exclude_unknown=False,
 ):
   """Yields per class metrics for multilabel case."""
   metrics = _get_metrics(metrics, DEFAULT_PER_CLASS_METRICS_MULTILABEL)
   tp, tn, fp, fn = cm_components
 
-  threshold_idx = np.argmin(computed_thresholds > threshold)
+  # Select the computed threshold entry closest to `threshold` (note:
+  # `np.argmin(computed_thresholds > threshold)` always returns index 0 on
+  # ascending arrays because the first element is False).
+  threshold_idx = np.abs(np.asarray(computed_thresholds) - threshold).argmin()
   tp_thresh = tp[threshold_idx]
   fp_thresh = fp[threshold_idx]
   fn_thresh = fn[threshold_idx]

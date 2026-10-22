@@ -34,7 +34,7 @@ def pytree_paths(
                        flax.core.FrozenDict: "FLAX:"}
   else:
     type_path_names = {list: "", tuple: "", dict: "", flax.core.FrozenDict: ""}
-  path_name = type_path_names.get(type(param_tree), "LEAF")
+  path_name = type_path_names.get(type(param_tree), "LEAF")  # pyrefly: ignore[no-matching-overload]
   return_val = lambda k, v: (k, v) if as_kv else k
   if isinstance(param_tree, (tuple, list)):
     for i, x in enumerate(param_tree):
@@ -66,12 +66,12 @@ def pytree_paths_split(d: Mapping[str, Any]) -> dict[str, Any]:
   return new_d
 
 
-def pytree_paths_flatten(
-    d: Mapping[Any, Any], sep: str = "/", seq_is_leaf: bool = False
-) -> dict[str, Any]:
+def pytree_paths_flatten(d: PyTree, sep: str = "/", seq_is_leaf: bool = False
+                         ) -> dict[str, Any]:
   """Given dict with nested keys, flatten to a dict with compressed keys."""
   # {"a": {"b": {"c": 1, "d": {"e": 3}}}} --> {"a/b/c": 1, "a/b/d/e": 3}
   # {"a": {"b": [1, 2]}} --> {"a/b/0": 1, "a/b/1": 2}
+  # {[0, 1]} --> {"0": 0, "1": 1}
   # seq_is_leaf=True: {"a": {"b": [1, 2]}} --> {"a/b": [1, 2]}
   is_leaf = None
   if seq_is_leaf:
@@ -102,11 +102,63 @@ def tree_info(tree: PyTree, annotate_types: bool = False,
     print(f"{k:<40} \t{str(dtype)} \t{shape} \t{type(v).__name__}")
     if type_and_counts:
       # TensorSpec(shape=(None,) has shape, but np.prod() returns None.
-      num_params += (np.prod(shape) if hasattr(v, "shape") else 0) or 0
+      num_params += (np.prod(shape) if hasattr(v, "shape") else 0) or 0  # pyrefly: ignore[no-matching-overload]
       num_vars += 1
   if type_and_counts:
     print(f"  {type(tree)}")
     print(f"  Number of variables: {num_vars}; total size: {num_params:,}")
+
+
+def tree_diff(tree_a: PyTree, tree_b: PyTree, name_a: str = "A",
+              name_b: str = "B"):
+  """Compares two PyTrees by variable names, shapes, and dtypes."""
+  dict_a = pytree_paths_flatten(tree_a)
+  dict_b = pytree_paths_flatten(tree_b, sep="/")
+  only_in_a = set(dict_a) - set(dict_b)
+  only_in_b = set(dict_b) - set(dict_a)
+  common_keys = set(dict_a) & set(dict_b)
+
+  print(f"=== PyTree Comparison: {name_a} vs {name_b} ===")
+  print(f"Total keys in {name_a}: {len(dict_a)}")
+  print(f"Total keys in {name_b}: {len(dict_b)}")
+
+  if only_in_a:
+    print(f"\nKeys only in {name_a} ({len(only_in_a)}):")
+    for k in sorted(only_in_a):
+      v = dict_a[k]
+      dtype = v.dtype if hasattr(v, "dtype") else type(v)
+      shape = v.shape if hasattr(v, "shape") else ()
+      print(f"  {k} (shape: {shape}, dtype: {dtype})")
+  if only_in_b:
+    print(f"\nKeys only in {name_b} ({len(only_in_b)}):")
+    for k in sorted(only_in_b):
+      v = dict_b[k]
+      dtype = v.dtype if hasattr(v, "dtype") else type(v)
+      shape = v.shape if hasattr(v, "shape") else ()
+      print(f"  {k} (shape: {shape}, dtype: {dtype})")
+
+  mismatches = []
+  for k in sorted(common_keys):
+    leaf_a = dict_a[k]
+    leaf_b = dict_b[k]
+    shape_a = leaf_a.shape if hasattr(leaf_a, "shape") else ()
+    shape_b = leaf_b.shape if hasattr(leaf_b, "shape") else ()
+    dtype_a = leaf_a.dtype if hasattr(leaf_a, "dtype") else type(leaf_a)
+    dtype_b = leaf_b.dtype if hasattr(leaf_b, "dtype") else type(leaf_b)
+    shape_match = shape_a == shape_b
+    dtype_match = dtype_a == dtype_b
+    if not (shape_match and dtype_match):
+      mismatches.append((k, shape_a, shape_b, dtype_a, dtype_b))
+  if mismatches:
+    print(f"\nFound {len(mismatches)} common keys with shape/dtype mismatches:")
+    for k, shape_a, shape_b, dtype_a, dtype_b in mismatches:
+      print(f"  {k}:")
+      if shape_a != shape_b:
+        print(f"    Shape mismatch: {name_a}={shape_a} vs {name_b}={shape_b}")
+      if dtype_a != dtype_b:
+        print(f"    Dtype mismatch: {name_a}={dtype_a} vs {name_b}={dtype_b}")
+  else:
+    print("\nAll common keys have matching shapes and dtypes!")
 
 
 def normalize(arr: np.ndarray,

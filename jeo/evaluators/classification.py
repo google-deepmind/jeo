@@ -141,7 +141,7 @@ class Evaluator(eval_builder.EvaluatorBase):
           "mask": self._get_mask(batch),  # (B,)
       }
       extra = {"exclude_background_class": self.exclude_background_class}
-      metrics_updates = self.metrics_fn(loss, outputs, inputs, extra, None)
+      metrics_updates = self.metrics_fn(loss, outputs, inputs, extra, None)  # pyrefly: ignore[bad-argument-type]
       return metrics_updates, (logits,)
     return _eval_fn
 

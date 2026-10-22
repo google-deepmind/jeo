@@ -48,7 +48,7 @@ def get_decode_jeo_satellites(
       if normalize:
         if sat.endswith("_mask"):  # Keep original mask (1: valid, 0: invalid).
           continue
-        center, scale = center_and_scale_per_satellite[sat]  # pytype: disable=name-error
+        center, scale = center_and_scale_per_satellite[sat]
         if center is not None and scale is not None:
           data[sat] = (tf.cast(data[sat], tf.float32) - center) / scale
         if clip:  # Clipping values only if normalizing data.

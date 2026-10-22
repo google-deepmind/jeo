@@ -135,7 +135,7 @@ def parse_name(string_to_parse):
       "resnet50_v2(9, filters_factor=4)" ->
           ("resnet50_v2", (9,), {"filters_factor": 4})
   """
-  expr = ast.parse(string_to_parse, mode="eval").body  # pytype: disable=attribute-error
+  expr = ast.parse(string_to_parse, mode="eval").body
   if not isinstance(expr, (ast.Attribute, ast.Call, ast.Name)):
     raise ValueError(
         "The given string should be a name or a call, but a {} was parsed from "

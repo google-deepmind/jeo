@@ -386,7 +386,7 @@ class PatchMerging(nn.Module):
     rearrange_str = 'b (d pd) (h ph) (w pw) c -> b d h w (pd ph pw c)'
     x = einops.rearrange(x, rearrange_str, pd=pd, ph=ph, pw=pw)
     x = Dense(features=2 * c, use_bias=False, name='proj')(x)
-    x = apply_norm(x, self.norm_type, train)
+    x = apply_norm(x, self.norm_type, train)  # pyrefly: ignore[bad-argument-type]
     return x
 
 
@@ -400,7 +400,7 @@ class PatchExpand(nn.Module):
   def __call__(self, x: Array, *, train: bool) -> Array:
     *_, c = x.shape
     x = Dense(features=2 * c, use_bias=False, name='proj')(x)
-    x = apply_norm(x, self.norm_type, train)
+    x = apply_norm(x, self.norm_type, train)  # pyrefly: ignore[bad-argument-type]
     pd, ph, pw = self.resolution
     # [B, pd*D, ph*H, pw*W, C/2]
     rearrange_str = 'b d h w (pd ph pw c) -> b (d pd) (h ph) (w pw) c'
@@ -498,7 +498,7 @@ class SwinTransformerBlock(nn.Module):
     # Reverse cyclic shift
     if any_dim_shifted:
       x = jnp.roll(x, shift=effective_shift_size, axis=(1, 2, 3))
-    x = apply_norm(x, self.norm_type, not deterministic)
+    x = apply_norm(x, self.norm_type, not deterministic)  # pyrefly: ignore[bad-argument-type]
     x = StochasticDepth(self.drop_path_rate)(x, deterministic=deterministic)
     x = shortcut + x
 
@@ -507,7 +507,7 @@ class SwinTransformerBlock(nn.Module):
     x = MLP(int(c * self.mlp_ratio), c, self.mlp_drop_rate)(
         x, deterministic=deterministic
     )
-    x = apply_norm(x, self.norm_type, not deterministic)
+    x = apply_norm(x, self.norm_type, not deterministic)  # pyrefly: ignore[bad-argument-type]
     x = StochasticDepth(self.drop_path_rate)(x, deterministic=deterministic)
     x = shortcut + x
     return x
@@ -533,9 +533,7 @@ class Embed(nn.Module):
   compute_patches: bool
 
   @nn.compact
-  def __call__(
-      self, x: Array | dict[str, Array], *, train: bool
-  ) -> Array | dict[str, Array]:
+  def __call__(self, x: Array | dict[str, Array], *, train: bool) -> Array:
     embed_module = lambda ps: nn.Sequential([
         nn.Conv(
             # No padding needed due to divisibility check
@@ -544,20 +542,20 @@ class Embed(nn.Module):
             strides=ps if self.compute_patches else (1, 1, 1),
             padding='VALID' if self.compute_patches else 'SAME',
         ),
-        functools.partial(apply_norm, norm_type=self.norm_type, train=train),
+        functools.partial(apply_norm, norm_type=self.norm_type, train=train),  # pyrefly: ignore[bad-argument-type]
     ])
 
     if isinstance(x, dict):
       for k, v in x.items():
         if self.compute_patches:
-          _check_shapes(v, self.patch_size[k], k)
-        x[k] = embed_module(self.patch_size[k])(v)
+          _check_shapes(v, self.patch_size[k], k)  # pyrefly: ignore[bad-index]
+        x[k] = embed_module(self.patch_size[k])(v)  # pyrefly: ignore[bad-index]
       # TODO: we are currently assuming that all the modalities
       # produce the same embedding dimension. This may not be the case.
       x = jnp.concatenate(list(x.values()), axis=-1)
     else:
       if self.compute_patches:
-        _check_shapes(x, self.patch_size, 'image')
+        _check_shapes(x, self.patch_size, 'image')  # pyrefly: ignore[bad-argument-type]
       x = embed_module(self.patch_size)(x)
 
     # Output shape: B, D/P, H/P, W/P, C
@@ -596,7 +594,7 @@ class SwinBlock(nn.Module):
       x = SwinTransformerBlock(
           num_heads=self.num_heads,
           window_size=self.window_size,
-          shift_size=shift_size,
+          shift_size=shift_size,  # pyrefly: ignore[bad-argument-type]
           mlp_ratio=self.mlp_ratio,
           qkv_bias=self.qkv_bias,
           drop_path_rate=self.drop_path_rates[i],
@@ -796,7 +794,7 @@ class ConvSegmentationHead(nn.Module):
 
       # CNN block.
       x = Conv(skip_c, (3, 3))(x)
-      x = apply_norm(x, self.norm_type, train)
+      x = apply_norm(x, self.norm_type, train)  # pyrefly: ignore[bad-argument-type]
       x = aux[f'skip_up_{i}'] = nn.gelu(x)
 
     # Final upsampling.
@@ -807,7 +805,7 @@ class ConvSegmentationHead(nn.Module):
     def _final_upsample(x):
       x = jax.image.resize(x, shape=shape, method='bilinear')
       x = Conv(c, (3, 3))(x)
-      x = apply_norm(x, self.norm_type, train)
+      x = apply_norm(x, self.norm_type, train)  # pyrefly: ignore[bad-argument-type]
       x = nn.gelu(x)
       return x
 
@@ -845,8 +843,8 @@ class SwinSegmentationHead(nn.Module):
         patch_module=patch_module, **swin_kwargs, name='swin_up'
     )(x, skips=skips, deterministic=not train)
     aux['up_out'] = x
-    for i, upskip in enumerate(upskip):
-      aux[f'skip_up_{len(upskip) - i - 1}'] = upskip
+    for i, u in enumerate(upskip):
+      aux[f'skip_up_{len(upskip) - i - 1}'] = u
     x = jnp.mean(x, axis=1, keepdims=not self.conv_upsample)
 
     def _final_upsample(y: Array):
@@ -862,7 +860,7 @@ class SwinSegmentationHead(nn.Module):
         y = PatchExpand(patch_size, self.conv_norm)(y, train=train)
         y = jnp.squeeze(y, axis=1)
       y = Conv(y.shape[-1], (3, 3))(y)
-      y = apply_norm(y, self.conv_norm, train)
+      y = apply_norm(y, self.conv_norm, train)  # pyrefly: ignore[bad-argument-type]
       y = nn.gelu(y)
       return y
 
@@ -915,12 +913,12 @@ class SuperResHead(nn.Module):
 
     # Add residual connection with shallow features.
     x = Conv(x.shape[-1], (1, 3, 3))(x) + shallow_features
-    x = apply_norm(x, self.conv_norm, train)
+    x = apply_norm(x, self.conv_norm, train)  # pyrefly: ignore[bad-argument-type]
     x = jax.nn.leaky_relu(x, negative_slope=0.2)
 
     # Conv layer before upsampling.
     x = Conv(64, kernel_size=(3, 3), padding='SAME')(x)
-    x = apply_norm(x, self.conv_norm, train)
+    x = apply_norm(x, self.conv_norm, train)  # pyrefly: ignore[bad-argument-type]
     x = jax.nn.leaky_relu(x, negative_slope=0.2)
 
     def _final_upsample(y: Array):
@@ -929,7 +927,7 @@ class SuperResHead(nn.Module):
         out_shape = y.shape[0], 2 * y.shape[1], 2 * y.shape[2], y.shape[3]
         y = jax.image.resize(y, out_shape, method='bilinear')
         y = Conv(64, kernel_size=(3, 3), padding='SAME')(y)
-        y = apply_norm(y, self.conv_norm, train)
+        y = apply_norm(y, self.conv_norm, train)  # pyrefly: ignore[bad-argument-type]
         y = jax.nn.leaky_relu(y, negative_slope=0.2)
       return y
 
@@ -954,7 +952,7 @@ class SwinV2Model(nn.Module):
   embed_dim: int = 128
   depths: Sequence[int] = (2, 2, 18, 2)
   num_heads: Sequence[int] = (4, 8, 16, 32)
-  window_size: tuple[int, int, int] | int = 7
+  window_size: int | tuple[int, int, int] | Sequence[tuple[int, int, int]] = 7
   mlp_ratio: float = 4.0
   qkv_bias: bool = True
   attn_drop_rate: float = 0.0
@@ -965,6 +963,12 @@ class SwinV2Model(nn.Module):
   encoder_norm: str | None = 'layer'  # ['batch', 'layer', None]
   mods: Sequence[str] = ()
   embed_module: Callable[..., nn.Module] | None = None
+  # Optional early temporal mixing and reduction stage applied after patch
+  # embedding and before the spatial Swin pyramid starts.
+  early_temporal_mixing_depth: int = 0
+  early_temporal_mixing_num_heads: int | None = None
+  early_temporal_mixing_window_size: int | None = None
+  early_temporal_mixing_reduction: str = 'conv'
 
   # Head Config
   head_type: str = ''
@@ -1000,12 +1004,13 @@ class SwinV2Model(nn.Module):
 
       if not all(k in x and k in patch_size for k in mods):
         raise ValueError(
+            # pyrefly: ignore[missing-attribute]
             f'One of {mods} is not in inputs {x.keys()} '
             f'or patch sizes {patch_size.keys()}'
         )
 
       x = {k: _maybe_make_5d(x[k]) for k in mods}
-      out_patch_size = patch_size[mods[0]]
+      out_patch_size = patch_size[mods[0]]  # pyrefly: ignore[bad-index]
     else:
       x = _maybe_make_5d(x)
       patch_size = out_patch_size = self.patch_size
@@ -1031,11 +1036,44 @@ class SwinV2Model(nn.Module):
 
     embed_cls = self.embed_module or Embed
     x = aux['embedded'] = embed_cls(
-        patch_size=patch_size,
+        patch_size=patch_size,  # pyrefly: ignore[bad-argument-type]
         embed_dim=self.embed_dim,
         norm_type=self.encoder_norm,
         compute_patches=compute_patches,
     )(x, train=train)
+
+    if self.early_temporal_mixing_depth > 0:
+      if (
+          self.early_temporal_mixing_window_size is not None
+          and self.early_temporal_mixing_window_size > 0
+      ):
+        temporal_window = self.early_temporal_mixing_window_size
+      else:
+        temporal_window = x.shape[1]
+      temporal_heads = (
+          self.early_temporal_mixing_num_heads
+          if self.early_temporal_mixing_num_heads is not None
+          else self.num_heads[0]
+      )
+      x = SwinBlock(
+          depth=self.early_temporal_mixing_depth,
+          num_heads=temporal_heads,
+          window_size=(temporal_window, 1, 1),
+          mlp_ratio=self.mlp_ratio,
+          qkv_bias=self.qkv_bias,
+          drop_path_rates=[0.0] * self.early_temporal_mixing_depth,
+          attn_drop_rate=self.attn_drop_rate,
+          mlp_drop_rate=self.mlp_drop_rate,
+          cpb_mlp=self.cpb_mlp,
+          add_final_conv=False,
+          norm_type=self.encoder_norm,
+          name='temporal_mixing',
+      )(x, deterministic=not train)
+      x = TemporalReduction(
+          reduction_type=ReductionType(self.early_temporal_mixing_reduction),
+          name='temporal_mixing_reduction',
+      )(x)
+      aux['temporal_mixed'] = x
 
     swin_kwargs = dict(
         depths=self.depths,
@@ -1058,7 +1096,9 @@ class SwinV2Model(nn.Module):
     # Swin Down
     x, skips = SwinTransformerV2(
         patch_module=down_module, **swin_kwargs, name='swin_down'
-    )(x, deterministic=not train)
+    )(
+        x, deterministic=not train
+    )
 
     aux['bottleneck'] = x
     for i, sk in enumerate(skips):
@@ -1070,7 +1110,7 @@ class SwinV2Model(nn.Module):
     if self.head_type == 'segmentation':
       return SwinSegmentationHead(
           self.num_classes,
-          out_patch_size,
+          out_patch_size,  # pyrefly: ignore[bad-argument-type]
           swin_kwargs,
           self.conv_upsample,
           self.conv_norm,
@@ -1079,7 +1119,7 @@ class SwinV2Model(nn.Module):
     if self.head_type == 'conv_segmentation':
       return ConvSegmentationHead(
           self.num_classes,
-          out_patch_size,
+          out_patch_size,  # pyrefly: ignore[bad-argument-type]
           self.conv_norm,
           temporal_reduction=self.temporal_reduction,
       )(x, aux, skips, train=train)

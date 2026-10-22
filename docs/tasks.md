@@ -1,4 +1,4 @@
-# Tasks & Losses
+# 🎯 Tasks & Losses
 
 (internal link)
 

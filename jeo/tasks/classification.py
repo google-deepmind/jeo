@@ -59,7 +59,7 @@ class ClassificationTask(task_builder.TaskBase):
     def fn(model_outputs):
       if not isinstance(model_outputs, (list, tuple)):
         model_outputs = (model_outputs,)
-      logits, _ = model_outputs  # pytype: disable=bad-unpacking
+      logits, _ = model_outputs  # pyrefly: ignore[bad-unpacking]
       predictions = jnp.argmax(logits, axis=-1)
       probs = (250 * jax.nn.softmax(logits)).astype(jnp.uint8)
       return {"preds": predictions, "probs": probs}
@@ -97,7 +97,7 @@ class MultiHeadClassificationTask(task_builder.TaskBase):
     def fn(model_outputs):
       if not isinstance(model_outputs, (list, tuple)):
         model_outputs = (model_outputs,)
-      logits, _ = model_outputs  # pytype: disable=bad-unpacking
+      logits, _ = model_outputs  # pyrefly: ignore[bad-unpacking]
       predictions = jnp.argmax(logits, axis=-1)
       probs = (250 * jax.nn.softmax(logits)).astype(jnp.uint8)
       return {"preds": predictions, "probs": probs}

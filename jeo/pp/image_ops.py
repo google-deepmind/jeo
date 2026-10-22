@@ -215,10 +215,10 @@ def get_random_crop(crop_size: int, num_crops: int = 1):
   Returns:
     A function, that applies random crop.
   """
-  crop_size = pp_utils.maybe_repeat(crop_size, 2)
+  crop_size = pp_utils.maybe_repeat(crop_size, 2)  # pyrefly: ignore[bad-assignment]
 
   def crop_fn(image):
-    shape = (*crop_size, image.shape[-1])
+    shape = (*crop_size, image.shape[-1])  # pyrefly: ignore[not-iterable]
     if num_crops > 1:
       return tf.vectorized_map(
           lambda _: tf.image.random_crop(image, shape), tf.range(num_crops)
@@ -243,11 +243,11 @@ def get_central_crop(crop_size: int | None = None):
     A function, that applies central crop.
   """
   if crop_size:
-    crop_size = pp_utils.maybe_repeat(crop_size, 2)
+    crop_size = pp_utils.maybe_repeat(crop_size, 2)  # pyrefly: ignore[bad-assignment]
 
   def _crop(image):
     if crop_size:
-      h, w = crop_size[0], crop_size[1]
+      h, w = crop_size[0], crop_size[1]  # pyrefly: ignore[bad-index]
     else:
       h = w = tf.minimum(tf.shape(image)[0], tf.shape(image)[1])
     is_2d = tf.shape(image).shape[0] == 2

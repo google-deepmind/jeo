@@ -41,11 +41,11 @@ def get_posemb(
     return module.param(name, nn.initializers.normal(stddev=1/np.sqrt(width)),
                         (1, np.prod(pos_dims), width), dtype)
   elif kind == "sine" and len(pos_dims) == 1:
-    return posemb_sincos_1d(*pos_dims, width, dtype=dtype)
+    return posemb_sincos_1d(*pos_dims, width, dtype=dtype)  # pyrefly: ignore[bad-keyword-argument]
   elif kind == "sine" and len(pos_dims) == 2:
-    return posemb_sincos_2d(*pos_dims, width, dtype=dtype)
+    return posemb_sincos_2d(*pos_dims, width, dtype=dtype)  # pyrefly: ignore[bad-keyword-argument]
   elif kind == "sine" and len(pos_dims) == 3:
-    return posemb_sincos_3d(*pos_dims, width, dtype=dtype)
+    return posemb_sincos_3d(*pos_dims, width, dtype=dtype)  # pyrefly: ignore[bad-keyword-argument]
   else:
     raise ValueError(f"Unknown posemb type: {kind}")
 

@@ -28,7 +28,7 @@ N - number of classes
 m = number of modalities
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from absl import logging
@@ -54,7 +54,7 @@ class Model(nn.Module):
 
   mods: Sequence[str]  # Modality names (should be in inputs and patch sizes).
   patch_sizes: dict[str, Sequence[int]]  # Dict of (t,h,w) patch sizes.
-  num_classes: int
+  num_classes: int | Mapping[str, int]
   emb_dim: int = 192
   temporal_depth: int = 2
   spatial_depth: int = 2
@@ -119,7 +119,7 @@ class Model(nn.Module):
 
       # Add class token embeddings.
       cls_temp = self.param("cls_temp", nn.initializers.zeros,
-                            (1, self.num_classes, self.emb_dim), x.dtype)
+                            (1, self._total_classes, self.emb_dim), x.dtype)
       cls_temp = einops.repeat(cls_temp, "1 n d -> b n d", b=x.shape[0])
       x = jnp.concatenate([cls_temp, x], axis=1)  # (mBhw,N+t,d)
       # Update valid_mask with class tokens for attention mask construction.
@@ -134,7 +134,7 @@ class Model(nn.Module):
           dropout=self.dropout,
           name="transformer_temporal")
       x, _ = temporal_encoder(x, deterministic=not train, mask=attn_mask)
-      x = x[:, : self.num_classes, :]  # Only class tokens  (mBhw,N,d)
+      x = x[:, : self._total_classes, :]  # Only class tokens  (mBhw,N,d)
       x = einops.unpack(x, ps, "* n d")
       x = [einops.rearrange(y, "(b s) n d -> (b n) s d", b=b) for y in x]
     else:  # Temporal first.
@@ -144,7 +144,7 @@ class Model(nn.Module):
           self, "learn", (x.shape[1],), self.emb_dim, "pe_temp", x.dtype)
       # Add class token embeddings.
       cls_temp = self.param("cls_temp", nn.initializers.zeros,
-                            (1, self.num_classes, self.emb_dim), x.dtype)
+                            (1, self._total_classes, self.emb_dim), x.dtype)
       cls_temp = einops.repeat(cls_temp, "1 n d -> b n d", b=x.shape[0])
       x = jnp.concatenate([cls_temp, x], axis=1)  # (mBhw,N+t,d)
       # Update valid_mask with class tokens for attention mask construction.
@@ -158,7 +158,7 @@ class Model(nn.Module):
           dropout=self.dropout,
           name="transformer_temporal")
       x, _ = temporal_encoder(x, deterministic=not train, mask=attn_mask)
-      x = x[:, : self.num_classes, :]  # Only class tokens  (mBhw,N,d)
+      x = x[:, : self._total_classes, :]  # Only class tokens  (mBhw,N,d)
       x = einops.unpack(x, ps, "* n d")  # Seq of ((b s) n d)
       x = [einops.rearrange(y, "(b s) n d -> (b n) s d", b=b) for y in x]
       x_ns = [y for y in x if y.shape[1] == 1]
@@ -192,7 +192,7 @@ class Model(nn.Module):
         num_layers=self.decoder_depth,
         qkv_dim=self.emb_dim,
         mlp_dim=self.emb_dim * 4,
-        num_classes=self.num_classes,
+        num_classes=self._total_classes,
         patched_shapes=patched_shapes,
         mods=mods[1:] if len(mods) > 1 else mods,
         multiscale=self.use_multiscale_decoder,
@@ -206,7 +206,7 @@ class Model(nn.Module):
       x = x[:, 0, :]  # (BN,d)
       x = nn.LayerNorm()(x)
       x = nn.Dense(1, name="head_cls")(x)
-      x = out["logits"] = x.reshape((b, self.num_classes))
+      x = out["logits"] = x.reshape((b, self._total_classes))
     elif self.head == "segmentation":  # Default TSViT segmentation head.
       x = nn.LayerNorm()(x)
       if self.use_upscale_pool:
@@ -226,7 +226,21 @@ class Model(nn.Module):
             b=b, h=output_h // patch_size[-2], p=patch_size[-2])
 
       out["logits_2d"] = x
+
+      if not isinstance(self.num_classes, int):  # Multi-task.
+        offset = 0
+        for name, nc in self.num_classes.items():
+          out[name] = x[..., offset:offset + nc]
+          offset += nc
+        return None, out
     return x, out
+
+  @property
+  def _total_classes(self) -> int:
+    """Total number of output classes (sum of per-task classes if dict)."""
+    if not isinstance(self.num_classes, int):
+      return sum(self.num_classes.values())
+    return self.num_classes
 
   def tokenize(self, inputs, separate=False):
     """Tokanizes each modality separately.
@@ -298,7 +312,7 @@ class ChunkDecoder(nn.Module):
   return_intermediate: bool = False
   dropout_rate: float = 0.0
   attention_dropout_rate: float = 0.0
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.float32  # pyrefly: ignore[bad-assignment]
   multiscale: bool = False
 
   @nn.compact

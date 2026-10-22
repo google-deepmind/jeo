@@ -77,7 +77,7 @@ class MetricWriter:
       return
 
     def write(metrics):
-      with open(self.fname, "a") as f:
+      with open(self.fname, "a") as f:  # pyrefly: ignore[no-matching-overload]
         f.write(json.dumps({"step": self.step, **metrics}) + "\n")
 
     if self.fname:

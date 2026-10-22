@@ -222,10 +222,10 @@ def _get_single_ds(
         data_dir=data_dir, keep_keys=keep_keys, **kwargs)
   else:
     data, _ = get_dataset_tfds(
-        dataset=dataset,
+        dataset=dataset,  # pyrefly: ignore[bad-argument-type]
         split=split,
         shuffle_files=train,
-        data_dir=data_dir,
+        data_dir=data_dir,  # pyrefly: ignore[bad-argument-type]
         skip_decode=skip_decode,
         download_and_prepare=download_and_prepare,
         interleave_cycle_length=interleave_cycle_length,
@@ -233,6 +233,10 @@ def _get_single_ds(
         interleave_block_length=interleave_block_length,
         num_parallel_calls_for_interleave_files=num_parallel_calls_for_interleave_files,
         num_parallel_calls_for_decode=num_parallel_calls_for_decode,
+        # With tf.data service DYNAMIC sharding, each worker only reads a subset
+        # of this host's shard files, so the per-host cardinality assertion
+        # that TFDS inserts would fail on the workers.
+        assert_cardinality=not data_service_address,
     )
 
   if not callable(preprocess_fn):
@@ -260,7 +264,7 @@ def _get_single_ds(
       # Potentially a costly operation over large datasets.
       num_examples = data.reduce(0, lambda x, _: x+1).numpy()
     else:
-      num_examples = get_num_examples(dataset, split, data_dir,
+      num_examples = get_num_examples(dataset, split, data_dir,  # pyrefly: ignore[bad-argument-type]
                                       dataset_module, **kwargs)
     # num_examples might be wrong if filter_final_fn is given.
 
@@ -316,7 +320,7 @@ def _get_single_ds(
       if dataset_module is None:  # TFDS dataset.
         splits = tfds.even_splits(split, jax.process_count())
         split_examples = [
-            get_num_examples(dataset, s, data_dir) * num_examples_multiplier
+            get_num_examples(dataset, s, data_dir) * num_examples_multiplier  # pyrefly: ignore[bad-argument-type]
             for s in splits]
         if filter_fn:
           # Potentially a costly operation over large datasets.
@@ -326,7 +330,7 @@ def _get_single_ds(
         max_num_examples_per_host = max(split_examples)
       else:
         num_examples = get_num_examples(
-            dataset, split, data_dir, dataset_module,
+            dataset, split, data_dir, dataset_module,  # pyrefly: ignore[bad-argument-type]
             **kwargs) * num_examples_multiplier
         # Approximation, assuming the examples were evenly distributed across
         # all hosts. This is not always true, but is not critical for train.
@@ -365,6 +369,7 @@ def _get_mixture_ds(
     batch_size: int,
     dataset_weights: Sequence[float] | None = None,
     prefetch: int = 2,
+    load_sequentially: bool = False,
     **kwargs) -> tuple[tf.data.Dataset, int]:
   """Returns dataset with the number of train examples or evaluation steps.
 
@@ -377,6 +382,8 @@ def _get_mixture_ds(
       by dataset sizes (each sample from any dataset has the same
       weight/probability).
     prefetch: Number of batches to prefetch.
+    load_sequentially: Whether to load dataset splits sequentially instead
+      of via ThreadPool.
     **kwargs: Additional arguments passed to dataset loading functions.
   Returns:
     Prefetched tf.data.Dataset object of the training or evaluation split.
@@ -402,8 +409,11 @@ def _get_mixture_ds(
     )
     return f"{dataset}:{split}", ds, total
 
-  with multiprocessing.pool.ThreadPool(len(dataset)) as pool:
-    results = pool.map(_make, zip(dataset, split, preprocess_fn))
+  if load_sequentially:
+    results = [_make(args) for args in zip(dataset, split, preprocess_fn)]
+  else:
+    with multiprocessing.pool.ThreadPool(len(dataset)) as pool:
+      results = pool.map(_make, zip(dataset, split, preprocess_fn))
   names, datasets, totals = zip(*results)
 
   totals = [total * weight for total, weight in zip(totals, dataset_weights)]
@@ -558,12 +568,35 @@ def get_dataset_tfds(
     interleave_block_length: int | None = None,
     num_parallel_calls_for_interleave_files: int | None = None,
     num_parallel_calls_for_decode: int | None = None,
+    assert_cardinality: bool = True,
 ) -> tuple[tf.data.Dataset, tfds.core.DatasetBuilder]:
-  """Returns TFDS dataset split."""
+  """Returns TFDS dataset split.
+
+  Args:
+    dataset: Name of the TFDS dataset.
+    split: Name of the split. It is further sub-split evenly across hosts.
+    shuffle_files: Whether to shuffle the input files.
+    data_dir: Path to the TFDS data (can be None).
+    skip_decode: Features for which decoding is skipped.
+    keep_keys: Subset of features to read; others are not decoded at all.
+    download_and_prepare: Download and prepare the TFDS dataset.
+    interleave_cycle_length: Interleave cycle length.
+    interleave_block_length: Interleave block length.
+    num_parallel_calls_for_interleave_files: Number of parallel calls for
+      interleaving files.
+    num_parallel_calls_for_decode: Number of parallel calls for decoding.
+    assert_cardinality: Whether TFDS asserts that the per-host split yields
+      exactly the number of examples recorded in the dataset info. Must be
+      disabled when the pipeline is distributed with tf.data service dynamic
+      sharding, where each worker only processes a subset of the split.
+
+  Returns:
+    The per-host dataset split and the TFDS dataset builder.
+  """
   builder = get_builder(dataset, data_dir)
   if download_and_prepare:
     builder.download_and_prepare()
-  split = tfds.even_splits(split, jax.process_count())[jax.process_index()]
+  split = tfds.even_splits(split, jax.process_count())[jax.process_index()]  # pyrefly: ignore[bad-assignment]
   decoders = {
       f: tfds.decode.SkipDecoding()
       for f in skip_decode if f in builder.info.features
@@ -577,6 +610,7 @@ def get_dataset_tfds(
       skip_prefetch=True,  # We prefetch after pipeline.
       try_autocache=False,  # We control this, esp. for few-shot.
       add_tfds_id=True,
+      assert_cardinality=assert_cardinality,
   )
   # NOTE: Value "None" is different from the default value "MISSING". So we
   # only overwrite it if it is explicitly set.

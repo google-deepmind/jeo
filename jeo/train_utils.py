@@ -347,7 +347,7 @@ class Chrono:
     write_note = write_note or self._write_note
 
     now = time.monotonic()
-    measure("uptime", now - self.program_start_time)
+    measure("uptime", now - self.program_start_time)  # pyrefly: ignore[not-callable]
     self.flush_timings()
 
     # We do always count examples, regardless of the timing-related warmup that
@@ -355,17 +355,17 @@ class Chrono:
     ds = step - self.prev_step  # Steps between ticks
     self.prev_step = step
     self.accum_examples_seen += ds * self.global_bs
-    measure("examples_seen", self.accum_examples_seen)
-    measure("progress", step / self.total_steps)
+    measure("examples_seen", self.accum_examples_seen)  # pyrefly: ignore[not-callable]
+    measure("progress", step / self.total_steps)  # pyrefly: ignore[not-callable]
     if self.steps_per_epoch:
-      measure("epoch", step / self.steps_per_epoch)
+      measure("epoch", step / self.steps_per_epoch)  # pyrefly: ignore[not-callable]
 
     # We take the start as the second time `tick` is called, so we avoid
     # measuring the overhead of compilation and don't include it in time
     # estimates.
     if self.warmup > 1:
       self.warmup -= 1
-      write_note(self.note)  # This can help debugging.
+      write_note(self.note)  # This can help debugging.  # pyrefly: ignore[not-callable]
       return
     if self.warmup == 1:
       self.train_start_time = self.prev_time = now
@@ -373,14 +373,14 @@ class Chrono:
       self.accum_program_time += now - self.program_start_time
       self.paused_time = 0  # Drop pauses that happened before timing starts.
       self.warmup = 0
-      write_note(self.note)  # This can help debugging.
+      write_note(self.note)  # This can help debugging.  # pyrefly: ignore[not-callable]
       return
 
     # Measurement with micro-timings of current training steps speed.
     # Time between ticks (ignoring pause)
-    dt = now - self.prev_time - self.paused_time
+    dt = now - self.prev_time - self.paused_time  # pyrefly: ignore[unsupported-operation]
     ncores = jax.device_count()  # Global device count
-    measure("img/sec/core", self.global_bs * ds / dt / ncores)
+    measure("img/sec/core", self.global_bs * ds / dt / ncores)  # pyrefly: ignore[not-callable]
 
     # Accumulate (integrate) times, good for plots.
     self.accum_train_time += dt
@@ -390,12 +390,12 @@ class Chrono:
     # Convert to, and log as, core hours.
     core_hours = self.accum_train_time * ncores / 60 / 60
     devtype = jax.devices()[0].device_kind
-    measure(f"core_hours_{devtype}", core_hours)
-    measure("core_hours", core_hours)  # For convenience as x-axis in sweeps.
+    measure(f"core_hours_{devtype}", core_hours)  # pyrefly: ignore[not-callable]
+    measure("core_hours", core_hours)  # For convenience as x-axis in sweeps.  # pyrefly: ignore[not-callable]
 
     # Progress note with "global" full-program average timings
     # (eg in program-time minus warmup)
-    dt = now - self.train_start_time  # Time elapsed since end of warmup.
+    dt = now - self.train_start_time  # Time elapsed since end of warmup.  # pyrefly: ignore[unsupported-operation]
     steps_timed = step - self.train_start_step
     steps_todo = self.total_steps - step
     self.note = f"Steps:{step}/{self.total_steps} [{step/self.total_steps:.1%}]"
@@ -403,7 +403,7 @@ class Chrono:
     self.note += f" ({hms(self.accum_pause_time)} eval)"
     self.note += f"\nETA:{hms(dt / steps_timed*steps_todo)}"
     self.note += f"\nTotal train time:{hms(dt / steps_timed*self.total_steps)}"
-    write_note(self.note)
+    write_note(self.note)  # pyrefly: ignore[not-callable]
 
     log_memory(measure)
 
@@ -416,7 +416,7 @@ class Chrono:
     self.pause_start = time.monotonic()
 
   def resume(self):
-    self.paused_time += time.monotonic() - self.pause_start
+    self.paused_time += time.monotonic() - self.pause_start  # pyrefly: ignore[bad-assignment, unsupported-operation]
     self.pause_start = None
 
   def save(self):

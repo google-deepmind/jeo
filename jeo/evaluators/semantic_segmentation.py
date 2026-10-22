@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Semantic segmentation evaluator."""
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -60,7 +60,13 @@ class Evaluator(eval_builder.EvaluatorBase):
       class_mapping=None,
       logits_filter_key=None,
       logits_postprocess_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
-      multilabel_threshold: float = 0.5,
+      # Operating threshold(s) at which scalar per-class metrics (e.g. F1,
+      # precision, recall) are reported.
+      multilabel_threshold: float | Sequence[float] = 0.5,
+      # Full array of thresholds evaluated by `ConfusionMatrixMultilabel` (for
+      # PR-AUC and threshold lookup); defaults to the 200-point grid or
+      # `jnp.asarray(multilabel_threshold)` when `multilabel_threshold` is a
+      # sequence.
       multilabel_thresholds: np.ndarray | None = None,
       **cfg,
   ):
@@ -83,11 +89,12 @@ class Evaluator(eval_builder.EvaluatorBase):
     self.logits_filter_key = logits_filter_key
     self.class_mapping = class_mapping
     self.multilabel_threshold = multilabel_threshold
-    self.multilabel_thresholds = (
-        clu_metrics.get_default_thresholds()
-        if multilabel_thresholds is None
-        else multilabel_thresholds
-    )
+    if multilabel_thresholds is not None:
+      self.multilabel_thresholds = multilabel_thresholds
+    elif not isinstance(multilabel_threshold, (int, float, np.number)):
+      self.multilabel_thresholds = jnp.asarray(multilabel_threshold)
+    else:
+      self.multilabel_thresholds = clu_metrics.get_default_thresholds()
 
   def _get_metric_inputs(self):
 
@@ -142,13 +149,16 @@ class Evaluator(eval_builder.EvaluatorBase):
           "label_weights": weights,  # (B,[T],H,W)
           "mask": (batch["_mask"])  # (B,)
       }
-      extra |= {"exclude_background_class": self.exclude_background_class,
-                "sample_proportion": self.sample_proportion,
-                "false_label_ind": self.false_label_ind,
-                "true_label_ind": self.true_label_ind}
+      extra |= {
+          "exclude_background_class": self.exclude_background_class,
+          "sample_proportion": self.sample_proportion,
+          "false_label_ind": self.false_label_ind,
+          "true_label_ind": self.true_label_ind,
+          "thresholds": self.multilabel_thresholds,
+      }
       if self.strata_key is not None:
         extra |= {"strata": batch[self.strata_key],
-                  "strata_size": len(self.strata_weights)}
+                  "strata_size": len(self.strata_weights)}  # pyrefly: ignore[bad-argument-type]
       return loss, outputs, inputs, extra
 
     return _f
@@ -182,10 +192,23 @@ class Evaluator(eval_builder.EvaluatorBase):
 
     for k, v in self.metrics.result().items():
       if k == "confusion_matrix_multilabel/cm" and self.per_class_metrics:
-        for name, value in utils.get_per_class_multilabel_metrics(
-            v, self.label_map, self.per_class_metrics,
-            self.multilabel_threshold, self.multilabel_thresholds):
-          yield (name, value)
+        thresholds_to_eval = (
+            (float(self.multilabel_threshold),)
+            if isinstance(self.multilabel_threshold, (int, float, np.number))
+            else self.multilabel_threshold
+        )
+        for thresh in thresholds_to_eval:
+          for name, value in utils.get_per_class_multilabel_metrics(
+              v,
+              self.label_map,
+              self.per_class_metrics,
+              thresh,
+              np.asarray(self.multilabel_thresholds),
+          ):
+            metric_name = (
+                f"{name}@{thresh}" if len(thresholds_to_eval) > 1 else name
+            )
+            yield (metric_name, value)
       if k == "confusion_matrix" and self.per_class_metrics:
         for name, value in utils.get_per_class_metrics(
             v, self.label_map, metrics=self.per_class_metrics):

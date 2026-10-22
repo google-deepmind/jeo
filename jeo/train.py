@@ -162,6 +162,7 @@ def _main(_):
       split=config.get("train_split", "train"),
       data_dir=fillin(config.get("dataset_dir")),
       dataset_module=config.get("dataset_module"),
+      load_sequentially=config.get("load_sequentially", False),
       **config.get("dataset_kwargs", {}),
       batch_size=local_batch_size,
       preprocess_fn=config.pp_train,
@@ -515,17 +516,16 @@ def _main(_):
           kwds={"group": FLAGS.file_group},
       )
       chrono.resume()
+
     # Report training progress.
-    if (
-        do_train
-        and train_utils.itstime(step, log_training_steps, total_steps, host=0)
-        or chrono.warmup
-        and jax.process_index() == 0
+    if do_train and (
+        train_utils.itstime(step, log_training_steps, total_steps, host=0)
+        or (chrono.warmup and jax.process_index() == 0)
     ):
       for i, sched_fn_cpu in enumerate(sched_fns_cpu):
         mw.measure(f"global_schedule{i if i else ''}", sched_fn_cpu(step - 1))
-      l = mw.measure("training_loss", jax.device_get(loss_value))  # pylint: disable=undefined-variable
-      measurements = jax.device_get(measurements)
+      l = mw.measure("training_loss", jax.device_get(loss_value))  # pylint: disable=undefined-variable  # pyrefly: ignore[unbound-name]
+      measurements = jax.device_get(measurements)  # pyrefly: ignore[unbound-name]
       for name, value in measurements.items():  # pylint: disable=undefined-variable
         mw.measure(name, value)
         stop_training |= early_stopper.should_stop(step, name, value)

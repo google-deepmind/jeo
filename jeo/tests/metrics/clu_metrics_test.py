@@ -125,7 +125,7 @@ class LegacyMetricsTest(tf.test.TestCase, parameterized.TestCase):
         for model_output in model_outputs:
           update = metric_class.from_model_output(**model_output)
           metric = update if metric is None else metric.merge(update)
-      return metric.compute()  # pytype: disable=attribute-error
+      return metric.compute()  # pyrefly: ignore[missing-attribute]
 
     if to_jit:
       return jax.jit(compute_metric)
@@ -510,7 +510,7 @@ class MetricsTest(parameterized.TestCase):
     if jitted:
       metrics_fn = jax.jit(metrics_fn, static_argnames=(
           "false_label_ind", "true_label_ind"))
-    update = metrics_fn(labels=labels, logits=logits, false_label_ind=1,
+    update = metrics_fn(labels=labels, logits=logits, false_label_ind=1,  # pyrefly: ignore[bad-argument-type]
                         true_label_ind=2)
     actual = update.compute()
 
@@ -581,7 +581,7 @@ class MetricsTest(parameterized.TestCase):
     if jitted:
       metrics_fn = jax.jit(metrics_fn)
 
-    update = metrics_fn(logits=logits, labels=labels, mask=mask)
+    update = metrics_fn(logits=logits, labels=labels, mask=mask)  # pyrefly: ignore[bad-argument-type]
     result = update.compute()
     np.testing.assert_array_equal(round(result, 2), expected)
 

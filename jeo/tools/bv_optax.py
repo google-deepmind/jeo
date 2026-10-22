@@ -70,7 +70,7 @@ def clip_by_per_example_global_norm(
     grads_flat, grads_treedef = jax.tree_util.tree_flatten(updates)
     batch_size = grads_flat[0].shape[0]
     clipped, _ = optax.per_example_global_norm_clip(grads_flat, max_norm)
-    grads_sum = jax.tree_util.tree_unflatten(grads_treedef, clipped)
+    grads_sum = jax.tree_util.tree_unflatten(grads_treedef, clipped)  # pyrefly: ignore[bad-argument-type]
     grads_mean = jax.tree_util.tree_map(lambda x: x / batch_size, grads_sum)
     return grads_mean, state
 
@@ -198,10 +198,10 @@ def momentum_hp(momentum=0.9, dtype=jnp.bfloat16, nesterov=False):
 # Aliases for custom optimizers.
 # A fake object to allow for foo.bar access syntax, see
 # https://stackoverflow.com/a/19476841/2366315
-optax.big_vision = type("", (), {})()
-optax.big_vision.scale_by_adafactor = scale_by_adafactor  # pytype: disable=module-attr
-optax.big_vision.momentum_hp = momentum_hp  # pytype: disable=module-attr
-optax.big_vision.sgd = optax.identity  # pytype: disable=module-attr
+optax.big_vision = type("", (), {})()  # pyrefly: ignore[missing-attribute]
+optax.big_vision.scale_by_adafactor = scale_by_adafactor  # pyrefly: ignore[missing-attribute]
+optax.big_vision.momentum_hp = momentum_hp  # pyrefly: ignore[missing-attribute]
+optax.big_vision.sgd = optax.identity  # pyrefly: ignore[missing-attribute]
 
 
 def create_learning_rate_schedule(
@@ -253,7 +253,7 @@ def create_learning_rate_schedule(
     # The reference batch size in literature is 256, so we scale the lr to
     # adjust to the literature lr when bach_size changes.
     if scale_with_batchsize:
-      lr = lr * batch_size / 256.0
+      lr = lr * batch_size / 256.0  # pyrefly: ignore[unsupported-operation]
 
     progress = (step - warmup_steps - frozen_steps) / (
         total_steps - warmup_steps - frozen_steps

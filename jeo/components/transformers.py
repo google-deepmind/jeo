@@ -35,7 +35,7 @@ class MlpBlock(nn.Module):
   kernel_init: Callable[..., Any] = nn.initializers.xavier_uniform()
   bias_init: Callable[..., Any] = nn.initializers.normal(stddev=1e-6)
   activation_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.float32  # pyrefly: ignore[bad-assignment]
 
   @nn.compact
   def __call__(self,
@@ -88,7 +88,7 @@ class PatchMerger3D(nn.Module):
   use_bias: bool = False
   kernel_init: Initializer = nn.initializers.truncated_normal()
   bias_init: Initializer = nn.initializers.zeros
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.float32  # pyrefly: ignore[bad-assignment]
   precision: jax.lax.Precision | None = None
 
   @nn.compact
@@ -154,7 +154,7 @@ class DetrMultiHeadDotProductAttention(nn.Module):
   kernel_init: Callable[..., Any] = nn.initializers.xavier_uniform()
   bias_init: Callable[..., Any] = nn.initializers.zeros
   use_bias: bool = True
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.float32  # pyrefly: ignore[bad-assignment]
 
   @nn.compact
   def __call__(self,
@@ -277,7 +277,7 @@ class DetrDecoderBlock(nn.Module):
   pre_norm: bool = False
   dropout_rate: float = 0.0
   attention_dropout_rate: float = 0.0
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.float32  # pyrefly: ignore[bad-assignment]
 
   @nn.compact
   def __call__(self,
@@ -409,7 +409,7 @@ class DetrQueryPosEmbedding(nn.Module):
   hidden_dim: int
   num_queries: int
   posemb_init: Callable[..., Any] = nn.initializers.normal(stddev=1.0)
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.float32  # pyrefly: ignore[bad-assignment]
 
   @nn.compact
   def __call__(self) -> jnp.ndarray:
@@ -441,7 +441,7 @@ def dot_product_attention(
     bias_kv: jnp.ndarray | None = None,
     broadcast_dropout: bool = True,
     dropout_rate: float = 0.1,
-    dtype: jnp.dtype = jnp.float32,
+    dtype: jnp.dtype = jnp.float32,  # pyrefly: ignore[bad-function-definition]
     precision: jax.lax.Precision | None = None,
     deterministic: bool,
     dropout_rng: jnp.ndarray | None = None,

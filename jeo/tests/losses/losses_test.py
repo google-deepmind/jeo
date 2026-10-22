@@ -135,7 +135,7 @@ class LossesTest(parameterized.TestCase):
     pred = true + 0.5 * jax.random.uniform(rngs[1], (b, h, w, c))
     expected = ((pred - true)**2).mean()
     out = losses.l2_loss(logits=pred, labels=true)
-    self.assertAlmostEqual(out, expected)
+    self.assertAlmostEqual(out, expected)  # pyrefly: ignore[no-matching-overload]
 
   def test_l1(self):
     b, h, w, c = 2, 12, 12, 3
@@ -144,7 +144,27 @@ class LossesTest(parameterized.TestCase):
     pred = true + 0.5 * jax.random.uniform(rngs[1], (b, h, w, c))
     expected = ((pred - true)).mean()
     out = losses.l1_loss(logits=pred, labels=true)
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
+
+  def test_image_gradient_loss(self):
+    b, h, w, c = 2, 12, 12, 3
+    rngs = jax.random.split(jax.random.PRNGKey(42), 2)
+    true = jax.random.uniform(rngs[0], (b, h, w, c))
+    pred = true + 0.5 * jax.random.uniform(rngs[1], (b, h, w, c))
+
+    true_dx = true[:, :, 1:] - true[:, :, :-1]
+    true_dy = true[:, 1:, :] - true[:, :-1, :]
+    pred_dx = pred[:, :, 1:] - pred[:, :, :-1]
+    pred_dy = pred[:, 1:, :] - pred[:, :-1, :]
+
+    loss_dx = jnp.abs(pred_dx - true_dx)
+    loss_dy = jnp.abs(pred_dy - true_dy)
+
+    expected = (
+        loss_dx.mean(axis=(1, 2, 3)) + loss_dy.mean(axis=(1, 2, 3))
+    ).mean()
+    out = losses.image_gradient_loss(logits=pred, labels=true)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
   @parameterized.parameters((False,), (True,))
   def test_l2_with_weights(self, reduction):
@@ -157,7 +177,7 @@ class LossesTest(parameterized.TestCase):
     out = losses.l2_loss(logits=x, labels=y, weights=w, reduction=reduction)
     if reduction:
       expected = (se * w).sum() / w.sum()
-      self.assertAlmostEqual(out, expected, places=5)
+      self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
     else:
       expected = (se * w).sum(axis=(1, 2)) / w.sum(axis=(1, 2))
       np.testing.assert_array_almost_equal(out, expected)
@@ -169,7 +189,7 @@ class LossesTest(parameterized.TestCase):
     logits = labels + jax.random.uniform(rngs[1], (b, h, w))
     expected = optax.sigmoid_binary_cross_entropy(logits, labels).mean()
     out = losses.sigmoid_xent(logits=logits, labels=labels)
-    self.assertAlmostEqual(out, expected, places=6)
+    self.assertAlmostEqual(out, expected, places=6)  # pyrefly: ignore[no-matching-overload]
 
   def test_generalized_softmax_xent(self):
     b, h, w, n = 2, 12, 12, 10
@@ -181,12 +201,23 @@ class LossesTest(parameterized.TestCase):
     # Test with int labels.
     expected = optax.softmax_cross_entropy(logits, labels_onehot).mean()
     out = losses.generalized_softmax_xent(logits=logits, labels=labels)
-    self.assertAlmostEqual(out, expected, 5)
+    self.assertAlmostEqual(out, expected, 5)  # pyrefly: ignore[no-matching-overload]
 
     # Test with one-hot labels.
     expected = optax.softmax_cross_entropy(logits, labels_onehot).mean()
     out = losses.generalized_softmax_xent(logits=logits, labels=labels_onehot)
-    self.assertAlmostEqual(out, expected, 5)
+    self.assertAlmostEqual(out, expected, 5)  # pyrefly: ignore[no-matching-overload]
+
+    # Test with class weights.
+    class_weights = [float(i) for i in range(n)]
+    weighted_targets = labels_onehot * jnp.array(class_weights)
+    expected_weighted = -jnp.sum(
+        weighted_targets * jax.nn.log_softmax(logits), axis=-1
+    ).mean()
+    out = losses.generalized_softmax_xent(
+        logits=logits, labels=labels, class_weights=class_weights
+    )
+    self.assertAlmostEqual(out, expected_weighted, 4)  # pyrefly: ignore[no-matching-overload]
 
   def test_lq_loss(self):
     b, h, w, n = 2, 12, 12, 10
@@ -198,17 +229,17 @@ class LossesTest(parameterized.TestCase):
     # Test q=0 with int labels.
     expected = optax.softmax_cross_entropy(logits, labels_onehot).mean()
     out = losses.lq_loss(logits=logits, labels=labels, q=0.0)
-    self.assertAlmostEqual(out, expected, 5)
+    self.assertAlmostEqual(out, expected, 5)  # pyrefly: ignore[no-matching-overload]
 
     # Test q=0 with one-hot labels.
     out = losses.lq_loss(logits=logits, labels=labels_onehot, q=0.0)
-    self.assertAlmostEqual(out, expected, 5)
+    self.assertAlmostEqual(out, expected, 5)  # pyrefly: ignore[no-matching-overload]
 
     # Test q=1 with int labels.
     probs = jax.nn.softmax(logits, axis=-1)
     expected_q1 = (1.0 - jnp.sum(labels_onehot * probs**1.0, axis=-1)).mean()
     out = losses.lq_loss(logits=logits, labels=labels, q=1.0)
-    self.assertAlmostEqual(out, expected_q1, 5)
+    self.assertAlmostEqual(out, expected_q1, 5)  # pyrefly: ignore[no-matching-overload]
 
     # Test q=0.5 with int labels.
     probs = jax.nn.softmax(logits, axis=-1)
@@ -216,7 +247,7 @@ class LossesTest(parameterized.TestCase):
         (1.0 - jnp.sum(labels_onehot * probs**0.5, axis=-1)) / 0.5
     )
     out = losses.lq_loss(logits=logits, labels=labels, q=0.5)
-    self.assertAlmostEqual(out, expected_q05, 5)
+    self.assertAlmostEqual(out, expected_q05, 5)  # pyrefly: ignore[no-matching-overload]
 
     # Test reduction=False
     out_no_reduction = losses.lq_loss(
@@ -262,7 +293,7 @@ class LossesTest(parameterized.TestCase):
     out = losses.kld_loss(
         logits=pred_probs, labels=true_probs, activation="none"
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Model inputs are probabilities, labels are logits.
     out = losses.kld_loss(
@@ -271,13 +302,13 @@ class LossesTest(parameterized.TestCase):
         activation="none",
         labels_activation="softmax",
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # # Model inputs are logits, labels are probabilities.
     out = losses.kld_loss(
         logits=pred_logits, labels=true_probs, activation="softmax"
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Model inputs are logits, labels are logits.
     out = losses.kld_loss(
@@ -286,7 +317,7 @@ class LossesTest(parameterized.TestCase):
         activation="softmax",
         labels_activation="softmax",
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
   def test_kld_loss_sigmoid(self):
     b = 8
@@ -309,7 +340,7 @@ class LossesTest(parameterized.TestCase):
         labels=multiclass_true_probs,
         activation="none",
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Model inputs are probabilities, labels are logits.
     out = losses.kld_loss(
@@ -318,13 +349,13 @@ class LossesTest(parameterized.TestCase):
         activation="none",
         labels_activation="sigmoid",
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # # # Model inputs are logits, labels are probabilities.
     out = losses.kld_loss(
         logits=pred_logits, labels=multiclass_true_probs, activation="sigmoid"
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # # Model inputs are logits, labels are logits.
     out = losses.kld_loss(
@@ -333,7 +364,7 @@ class LossesTest(parameterized.TestCase):
         activation="sigmoid",
         labels_activation="sigmoid",
     )
-    self.assertAlmostEqual(out, expected, places=5)
+    self.assertAlmostEqual(out, expected, places=5)  # pyrefly: ignore[no-matching-overload]
 
   @parameterized.parameters((True,), (False,))
   def test_nt_xent(self, jit):
@@ -420,14 +451,25 @@ class LossesTest(parameterized.TestCase):
     tvs_1_dual = loss_fn(norm_type="tversky", dual=True, beta=0.1).item()
     tvs_9 = loss_fn(norm_type="tversky", beta=0.9, **kwargs).item()
     tvs_9_dual = loss_fn(norm_type="tversky", dual=True, beta=0.9).item()
+    tvl = loss_fn(norm_type="tversky_linear").item()
+    tvl_dual = loss_fn(norm_type="tversky_linear", dual=True).item()
+    tvl_1 = loss_fn(norm_type="tversky_linear", beta=0.1).item()
+    tvl_1_dual = loss_fn(norm_type="tversky_linear", dual=True, beta=0.1).item()
+    tvl_9 = loss_fn(norm_type="tversky_linear", beta=0.9).item()
+    tvl_9_dual = loss_fn(norm_type="tversky_linear", dual=True, beta=0.9).item()
+    # At beta = 0.5 the linear Tversky denominator equals the standard one.
+    tvl_5 = loss_fn(norm_type="tversky_linear", beta=0.5).item()
 
     self.assertSequenceAlmostEqual(
         (st, st_dual, sq, sq_dual, tan, tan_dual, tvs, tvs_dual, tvs_1,
-         tvs_1_dual, tvs_9, tvs_9_dual),
+         tvs_1_dual, tvs_9, tvs_9_dual, tvl, tvl_dual, tvl_1, tvl_1_dual,
+         tvl_9, tvl_9_dual),
         (0.8815, 0.5488, 0.8392, 0.4960, 0.9040, 0.5827, 0.8555, 0.5166, 0.6691,
-         0.3688, 0.8628, 0.5283),
+         0.3688, 0.8628, 0.5283, 0.8824, 0.5480, 0.8386, 0.5223, 0.8741,
+         0.5397),
         places=3,
     )
+    self.assertAlmostEqual(tvl_5, st, places=5)
 
   @parameterized.parameters([[True], [False]])
   def test_weighted_losses_sum(self, reduction):
@@ -450,7 +492,7 @@ class LossesTest(parameterized.TestCase):
     # Check that the individual losses are computed correctly.
     for name, loss_kwg in losses_config.items():
       loss_fn = losses.get_loss_fn(
-          loss_kwg["loss"], **loss_kwg.get("loss_kw", {})
+          loss_kwg["loss"], **loss_kwg.get("loss_kw", {})  # pyrefly: ignore[bad-unpacking]
       )
       loss = loss_fn(logits=logits, labels=labels)
       self.assertAlmostEqual(np.mean(loss), np.mean(losses_values[name]))
@@ -469,7 +511,7 @@ class LossesTest(parameterized.TestCase):
     expected = (0.5 * quadratic**2 + delta * linear).mean()
 
     out = losses.huber_loss(logits=pred, labels=true)
-    self.assertAlmostEqual(out, expected)
+    self.assertAlmostEqual(out, expected)  # pyrefly: ignore[no-matching-overload]
 
   def test_smape_loss(self):
     logits = jnp.array([[1.0, 2.0], [0.0, 0.0]])
@@ -484,7 +526,7 @@ class LossesTest(parameterized.TestCase):
 
     # Reduction, no weights.
     loss = losses.smape_loss(logits, labels, reduction=True)
-    self.assertAlmostEqual(loss, 2 / 3, places=5)
+    self.assertAlmostEqual(loss, 2 / 3, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Reduction, with weights.
     weights = jnp.array([[1.0, 1.0], [1.0, 0.0]])
@@ -494,19 +536,19 @@ class LossesTest(parameterized.TestCase):
     # batch 1: loss items [0, 2], weights [1, 0], weighted loss
     # = (0*1 + 2*0) / (1+0) = 0
     # reduced loss = mean(1/3, 0) = 1/6
-    self.assertAlmostEqual(loss, 1 / 6, places=5)
+    self.assertAlmostEqual(loss, 1 / 6, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Perfect match.
     loss = losses.smape_loss(jnp.array([1.0, 1.0]), jnp.array([1.0, 1.0]))
-    self.assertAlmostEqual(loss, 0.0, places=5)
+    self.assertAlmostEqual(loss, 0.0, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Both zero.
     loss = losses.smape_loss(jnp.array([0.0, 0.0]), jnp.array([0.0, 0.0]))
-    self.assertAlmostEqual(loss, 0.0, places=5)
+    self.assertAlmostEqual(loss, 0.0, places=5)  # pyrefly: ignore[no-matching-overload]
 
     # Denominator zero before eps.
     loss = losses.smape_loss(jnp.array([0.0]), jnp.array([0.0]), eps=1e-8)
-    self.assertAlmostEqual(loss, 0.0, places=5)
+    self.assertAlmostEqual(loss, 0.0, places=5)  # pyrefly: ignore[no-matching-overload]
 
   @parameterized.parameters(
       itertools.product((True, False), ("l2_loss", "huber_loss"))
